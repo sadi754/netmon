@@ -1,0 +1,16 @@
+name: Feature request / پیشنهاد امکان جدید
+description: An idea to make NetMon more useful. / ایده‌ای برای بهتر شدن NetMon.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like? / چه چیزی می‌خواهید؟
+      description: What should NetMon do, and what would you use it for? / NetMon چه کاری انجام دهد و شما برای چه از آن استفاده می‌کنید؟
+    validations:
+      required: true
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else? / توضیح بیشتر
+      description: Examples, other programs that do it, screenshots. / مثال، برنامه‌های دیگری که این کار را می‌کنند، تصویر.

@@ -1,0 +1,54 @@
+name: Bug report / گزارش مشکل
+description: Something doesn't work as it should. / چیزی درست کار نمی‌کند.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! You can write in English or Persian. / ممنون از گزارش شما! می‌توانید فارسی یا انگلیسی بنویسید.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened? / چه اتفاقی افتاد؟
+      description: What did you do, what did you expect, what happened instead? Screenshots help. / چه کردید، چه انتظاری داشتید و چه شد؟ تصویر کمک می‌کند.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: NetMon version / نسخه‌ی NetMon
+      description: Settings → About
+      placeholder: "1.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How do you run it? / نحوه‌ی اجرا
+      options:
+        - Installer / فایل نصب
+        - Portable zip / نسخه‌ی zip
+        - From the source (run.bat) / از روی سورس
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version / نسخه‌ی ویندوز
+      placeholder: "Windows 11 24H2"
+  - type: dropdown
+    id: npcap
+    attributes:
+      label: Npcap installed? / Npcap نصب است؟
+      options:
+        - "Yes / بله"
+        - "No / خیر"
+        - "Don't know / نمی‌دانم"
+  - type: textarea
+    id: log
+    attributes:
+      label: Log / لاگ
+      description: |
+        The end of netmon.log (and window.log for window problems) from %LOCALAPPDATA%\NetMon (Settings → About → Open log file). Remove anything you consider private.
+        انتهای فایل netmon.log (و برای مشکلات پنجره window.log) از پوشه‌ی %LOCALAPPDATA%\NetMon. هر چیزی را که خصوصی می‌دانید پاک کنید.
+      render: text

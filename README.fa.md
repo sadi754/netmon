@@ -10,7 +10,7 @@
 ارسال آمار. همه‌ی کتابخانه‌ها، فونت‌ها و داده‌های نقشه داخل برنامه هستند؛ تنها دانلود
 اختیاری، دیتابیس رایگان GeoIP برای تب Connections است (با یک کلیک در تنظیمات).
 
-![صفحه‌ی Live](docs/images/live.png)
+![NetMon: سرعت زنده، نقشه، اتصال‌ها و مصرف](docs/images/demo.gif)
 
 ## امکانات
 
@@ -37,7 +37,9 @@
 | | |
 |---|---|
 | ![Usage](docs/images/usage.png) | ![Connections](docs/images/connections.png) |
-| ![Map](docs/images/map.png) | ![Widgets](docs/images/widgets.png) |
+| ![Live](docs/images/live.png) | ![Map](docs/images/map.png) |
+
+![ویجت‌ها: شناور یا روی تسک‌بار](docs/images/widgets.png)
 
 ## نصب
 

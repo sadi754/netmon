@@ -10,7 +10,7 @@ Everything runs on your computer. No accounts, no cloud, no telemetry. All
 libraries, fonts and map data are bundled; the one optional download is the free
 GeoIP database for the Connections tab (one click in Settings).
 
-![The Live page](docs/images/live.png)
+![NetMon: live speed, world map, connections and usage](docs/images/demo.gif)
 
 ## Features
 
@@ -38,7 +38,9 @@ GeoIP database for the Connections tab (one click in Settings).
 | | |
 |---|---|
 | ![Usage](docs/images/usage.png) | ![Connections](docs/images/connections.png) |
-| ![Map](docs/images/map.png) | ![Widgets](docs/images/widgets.png) |
+| ![Live](docs/images/live.png) | ![Map](docs/images/map.png) |
+
+![Widgets: floating or on the taskbar](docs/images/widgets.png)
 
 ## Install
 
