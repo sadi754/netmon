@@ -1,0 +1,49 @@
+# NetMon feed for MikroTik RouterOS 7 - paste into the router's terminal (Winbox -> New Terminal).
+#
+# Every minute the router sends the byte counters of its internet interface to
+# your NetMon relay, so the whole network's usage is recorded even while your PC
+# is off. Only byte counts leave the router - no addresses, no sites, no devices.
+#
+#   internet interface: {{WAN}}
+#   relay:              {{URL}}
+{{LIST_COMMENT}}
+#
+# To remove everything later:
+#   /system scheduler remove [find name="netmon-feed"]
+#   /system script remove [find name="netmon-feed"]
+#   /ip firewall mangle remove [find comment~"^netmon:"]
+
+{{MANGLE}}
+/system script remove [find name="netmon-feed"]
+/system script add name="netmon-feed" comment="NetMon: send internet byte counters to the relay" source={
+:local wan "{{WAN}}"
+:local url "{{URL}}/api/ingest"
+:local token "{{TOKEN}}"
+:local rx 0
+:local tx 0
+:local drx 0
+:local dtx 0
+:local arx 0
+:local atx 0
+:do {
+  :set rx [/interface get [find name=$wan] rx-byte]
+  :set tx [/interface get [find name=$wan] tx-byte]
+} on-error={ :log warning "netmon: interface $wan not found"; :error "netmon: no interface" }
+:do { :set drx [/ip firewall mangle get [find comment="netmon:domestic-down"] bytes] } on-error={}
+:do { :set dtx [/ip firewall mangle get [find comment="netmon:domestic-up"] bytes] } on-error={}
+:do { :set arx [/ip firewall mangle get [find comment="netmon:all-down"] bytes] } on-error={}
+:do { :set atx [/ip firewall mangle get [find comment="netmon:all-up"] bytes] } on-error={}
+:local body ("{\"router\":\"" . [/system identity get name] . "\",\"iface\":\"" . $wan . "\",\"uptime\":\"" . [/system resource get uptime] . "\",\"rx\":" . $rx . ",\"tx\":" . $tx . ",\"drx\":" . $drx . ",\"dtx\":" . $dtx . ",\"arx\":" . $arx . ",\"atx\":" . $atx . "}")
+:do {
+  /tool fetch url=$url http-method=post http-header-field=("Authorization: Bearer " . $token . ",Content-Type: application/json") http-data=$body output=none
+} on-error={ :log warning "netmon: could not reach the relay" }
+}
+
+/system scheduler remove [find name="netmon-feed"]
+/system scheduler add name="netmon-feed" interval=1m start-time=startup on-event="/system script run netmon-feed" comment="NetMon: every minute"
+
+:if ([:len [/ip firewall filter find action=fasttrack-connection disabled=no]] > 0) do={
+  :put "NOTE: FastTrack is on. Fast-tracked connections skip the mangle counting rules, so the domestic share will read too low (the totals are still right)."
+}
+/system script run netmon-feed
+:put "NetMon feed installed - it runs every minute. Check the log for 'netmon' warnings."

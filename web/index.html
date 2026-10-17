@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NetMon</title>
+<link rel="stylesheet" href="vendor/uplot/uPlot.min.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>NetMon</div>
+  <nav class="tabs">
+    <a class="tab" href="#live" data-view="live">Live</a>
+    <a class="tab" href="#usage" data-view="usage">Usage</a>
+    <a class="tab" href="#router" data-view="router" id="router-tab" hidden>Router</a>
+    <a class="tab" href="#connections" data-view="connections">Connections</a>
+    <a class="tab" href="#map" data-view="map">Map</a>
+    <a class="tab" href="#settings" data-view="settings">Settings</a>
+  </nav>
+  <div class="controls">
+    <label class="field">Adapter <select id="adapter"></select></label>
+    <div class="seg" id="units" role="group" aria-label="Units">
+      <button data-value="bits">bit/s</button><button data-value="bytes">B/s</button>
+    </div>
+  </div>
+</header>
+
+<main class="view" id="view-usage" hidden>
+  <section class="cards four" id="usage-cards"></section>
+  <section class="panel usage-panel">
+    <header class="panel-head">
+      <h2>Usage history</h2>
+      <div class="legend" id="usage-legend"></div>
+      <div class="seg" id="usage-range" role="group" aria-label="Period">
+        <button data-value="hours">Hours</button><button data-value="days">Days</button><button data-value="weeks">Weeks</button><button data-value="months">Months</button>
+      </div>
+      <div class="seg" id="usage-split" role="group" aria-label="Split by">
+        <button data-value="direction">Down / Up</button><button data-value="origin">Domestic / Intl</button>
+      </div>
+      <div class="seg" id="usage-mode" role="group" aria-label="Show as">
+        <button data-value="chart">Chart</button><button data-value="table">Table</button>
+      </div>
+      <button class="button secondary small" data-export="usage" title="Save these periods as a CSV file">CSV</button>
+    </header>
+    <div id="usage-chart" class="bar-chart"></div>
+    <div id="usage-table" class="table-wrap" hidden></div>
+    <p class="hint" id="usage-hint"></p>
+  </section>
+  <section class="panel" id="usage-programs-panel">
+    <header class="panel-head">
+      <h2>Programs</h2>
+      <span class="hint" id="usage-programs-note"></span>
+      <div class="seg" id="usage-programs-period" role="group" aria-label="Period">
+        <button data-value="day">Today</button><button data-value="week">This week</button><button data-value="month">This month</button>
+      </div>
+      <button class="button secondary small" data-export="programs" title="Save this table as a CSV file">CSV</button>
+    </header>
+    <div id="usage-programs"></div>
+  </section>
+</main>
+
+<main class="view" id="view-router" hidden>
+  <section class="router-status" id="router-status"></section>
+  <section class="cards three" id="router-cards"></section>
+  <section class="panel usage-panel" id="router-history">
+    <header class="panel-head">
+      <h2>Whole network</h2>
+      <div class="legend" id="router-legend"></div>
+      <div class="seg" id="router-range" role="group" aria-label="Period">
+        <button data-value="hours">Hours</button><button data-value="days">Days</button><button data-value="weeks">Weeks</button><button data-value="months">Months</button>
+      </div>
+      <div class="seg" id="router-split" role="group" aria-label="Split by">
+        <button data-value="direction">Down / Up</button><button data-value="origin">Domestic / Intl</button>
+      </div>
+      <div class="seg" id="router-mode" role="group" aria-label="Show as">
+        <button data-value="chart">Chart</button><button data-value="table">Table</button>
+      </div>
+      <button class="button secondary small" data-export="router" title="Save these periods as a CSV file">CSV</button>
+    </header>
+    <div id="router-chart" class="bar-chart"></div>
+    <div id="router-table" class="table-wrap" hidden></div>
+    <p class="hint">Everything that went through the router's internet connection – all devices – including hours when this PC was off.</p>
+  </section>
+
+  <section class="panel settings-panel" id="router-connection">
+    <h2>Connection</h2>
+    <p class="hint">NetMon reads your router's traffic from a <b>NetMon relay</b>: a small PHP program on a web host
+      that your MikroTik reports to every minute. See <code>relay/README.md</code> to host your own.</p>
+    <form id="router-form" class="form-grid" autocomplete="off">
+      <label for="router-url">Relay address</label>
+      <input type="text" id="router-url" placeholder="https://netmon.example.com" spellcheck="false">
+      <label for="router-token">Read token</label>
+      <input type="password" id="router-token" placeholder="READ_TOKEN from relay/deploy.py --init" spellcheck="false">
+      <span></span>
+      <span class="form-actions">
+        <button type="submit" class="button">Save</button>
+        <button type="button" class="button secondary" id="router-test">Test</button>
+        <span class="form-note" id="router-note"></span>
+      </span>
+    </form>
+
+    <details class="router-script">
+      <summary>Router script (RouterOS 7)</summary>
+      <p class="hint">Makes the script to paste into the router's terminal. It sends only byte counters, every minute.</p>
+      <form id="script-form" class="form-grid" autocomplete="off">
+        <label for="script-wan">Internet interface</label>
+        <span><input type="text" id="script-wan" value="pppoe-out1" spellcheck="false"> <small class="muted">the interface towards your ISP</small></span>
+        <label for="script-list">Domestic list</label>
+        <span><input type="text" id="script-list" placeholder="e.g. IP-IR (optional)" spellcheck="false"> <small class="muted">an address list of your country's IP ranges</small></span>
+        <label for="script-token">Router token</label>
+        <span><input type="password" id="script-token" placeholder="INGEST_TOKEN" spellcheck="false"> <small class="muted">not stored</small></span>
+        <span></span>
+        <span class="form-actions"><button type="submit" class="button">Make script</button><button type="button" class="button secondary" id="script-copy" disabled>Copy</button><span class="form-note" id="script-note"></span></span>
+      </form>
+      <textarea id="script-output" readonly spellcheck="false" hidden></textarea>
+    </details>
+  </section>
+</main>
+
+<main class="view" id="view-connections" hidden>
+  <section class="geoip-banner" id="conn-geoip" hidden></section>
+  <section class="conn-summary">
+    <div class="conn-stats" id="conn-stats"></div>
+    <div class="conn-vpn" id="conn-vpn"></div>
+  </section>
+  <section class="panel conn-panel">
+    <header class="conn-toolbar">
+      <input type="search" id="conn-search" placeholder="Search program, address, country, network…" spellcheck="false" autocomplete="off">
+      <label class="check"><input type="checkbox" data-setting="conn_hide_local"><i></i>Hide this PC &amp; LAN</label>
+      <label class="check"><input type="checkbox" data-setting="conn_show_listening"><i></i>Listening ports</label>
+      <span class="spacer"></span>
+      <div class="seg" id="conn-view" role="group" aria-label="Show">
+        <button data-value="list">List</button><button data-value="apps">By program</button>
+      </div>
+      <button class="button secondary" data-export="connections" title="Save the connections as a CSV file">Export</button>
+      <button class="button secondary" id="conn-pause" aria-pressed="false">Pause</button>
+    </header>
+    <div class="conn-countries" id="conn-countries"></div>
+    <div class="conn-body">
+      <div class="table-wrap" id="conn-wrap">
+        <table class="table conn-table">
+          <thead><tr id="conn-head">
+            <th data-sort="app">Program</th>
+            <th data-sort="remote">Remote address</th>
+            <th data-sort="port" class="num">Port</th>
+            <th data-sort="country">Location</th>
+            <th data-sort="org">Network</th>
+            <th data-sort="speed" class="num cap">Speed</th>
+            <th data-sort="data" class="num cap">Data</th>
+            <th data-sort="age" class="num">Open for</th>
+          </tr></thead>
+          <tbody id="conn-rows"></tbody>
+        </table>
+        <div class="conn-empty" id="conn-empty" hidden></div>
+      </div>
+      <aside class="conn-detail" id="conn-detail" hidden></aside>
+    </div>
+    <footer class="conn-foot">
+      <span id="conn-count"></span>
+      <span class="spacer"></span>
+      <span id="conn-udp-note">UDP (games, video calls, HTTP/3) has no remote side in Windows' table – it shows under Listening ports.
+        Turn on per-program traffic in Settings to see where it goes.</span>
+      <span id="conn-credit"></span>
+    </footer>
+  </section>
+</main>
+
+<main class="view" id="view-map" hidden>
+  <section class="geoip-banner" id="map-geoip" hidden></section>
+  <div class="map-row">
+    <section class="panel map-panel">
+      <div class="map-stage">
+        <div class="globe" id="globe" hidden></div>
+        <canvas class="flatmap" id="flatmap" aria-label="Flat world map of this PC's connections"></canvas>
+        <div class="map-tip float-tooltip-kap" id="map-tip" hidden></div>
+      </div>
+      <div class="map-stats" id="map-stats"></div>
+      <div class="map-message" id="map-message" hidden></div>
+      <footer class="map-controls">
+        <div class="legend">
+          <span><i class="swatch down"></i>Download</span><span><i class="swatch up"></i>Upload</span>
+          <span class="muted" title="Brighter, thicker and moving arcs carry traffic right now">moving = traffic now</span>
+        </div>
+        <span class="spacer"></span>
+        <div class="seg" id="map-view" role="group" aria-label="Map">
+          <button data-value="2d">2D</button><button data-value="3d">3D</button>
+        </div>
+        <label class="field">Program <select id="map-program"><option value="">All programs</option></select></label>
+        <button class="button secondary" id="map-rotate" aria-pressed="true" hidden>Auto-rotate</button>
+        <button class="button secondary" id="map-home">Home</button>
+      </footer>
+    </section>
+    <aside class="panel places-panel">
+      <div id="map-list">
+        <header class="panel-head"><h2>Destinations</h2><span class="spacer"></span><span class="hint" id="map-count"></span></header>
+        <div class="place-list" id="map-places"></div>
+      </div>
+      <div class="place-detail" id="map-place" hidden></div>
+    </aside>
+  </div>
+</main>
+
+<main class="view" id="view-settings" hidden>
+  <section class="panel settings-panel">
+    <h2>General</h2>
+    <label class="switch-row">
+      <span><b>Start NetMon with Windows</b><small>Starts in the tray when you sign in, without opening the window.
+        No admin rights needed.</small></span>
+      <input type="checkbox" id="autostart"><i class="switch"></i>
+    </label>
+    <div class="setting-line">
+      <span><b>Data folder</b><small id="data-dir"></small></span>
+      <button class="button secondary" data-open="data">Open folder</button>
+    </div>
+    <div class="setting-line">
+      <span><b>Export all data</b><small>Every hour NetMon has recorded – this PC, its programs, the router – as CSV
+        files for Excel (zip).</small></span>
+      <button class="button secondary" data-export="all">Export…</button>
+    </div>
+    <div class="setting-line">
+      <span><b>Delete usage history</b><small id="db-size">This PC's usage and per-program history. The router's data
+        and your settings stay.</small></span>
+      <button class="button danger" id="delete-history">Delete…</button>
+    </div>
+  </section>
+
+  <section class="panel settings-panel">
+    <h2>Floating widgets</h2>
+    <label class="switch-row">
+      <span><b>Mini graph</b><small>The last minute of download and upload, always on top.</small></span>
+      <input type="checkbox" data-setting="mini_visible"><i class="switch"></i>
+    </label>
+    <label class="switch-row">
+      <span><b>Ping widget</b><small>Live ping to a server of your choice – handy for online games.</small></span>
+      <input type="checkbox" data-setting="ping_visible"><i class="switch"></i>
+    </label>
+    <label class="switch-row">
+      <span><b>Hide widgets while a full-screen app is running</b><small>Games, full-screen videos and presentations stay clear. Only the screen they are on is affected.</small></span>
+      <input type="checkbox" data-setting="hide_in_fullscreen"><i class="switch"></i>
+    </label>
+    <p class="hint">Tip: drag a widget to move it, double-click it to open NetMon, right-click it for opacity.</p>
+  </section>
+
+  <section class="panel settings-panel">
+    <h2>Data quota</h2>
+    <label class="switch-row">
+      <span><b>Track a data quota</b><small>See how much of your internet package is used, and get a Windows notification at 80% and 100%.</small></span>
+      <input type="checkbox" data-setting="quota_enabled"><i class="switch"></i>
+    </label>
+    <form id="quota-form" class="form-grid" autocomplete="off">
+      <label for="quota-period">Period</label>
+      <select id="quota-period">
+        <option value="month">Each Jalali month (1st to last day)</option>
+        <option value="days">Every N days from a start date (prepaid packages)</option>
+        <option value="day">Every day</option>
+      </select>
+      <label for="quota-days" class="for-days">Length</label>
+      <span class="for-days"><input type="number" id="quota-days" min="1" max="366" step="1"> days</span>
+      <label for="quota-start" class="for-days">Starting on</label>
+      <span class="for-days"><input type="text" id="quota-start" placeholder="1405/07/01" maxlength="10" spellcheck="false"> <small class="muted">Jalali year/month/day, e.g. the day you bought the package</small></span>
+      <label for="quota-limit">Limit</label>
+      <span><input type="number" id="quota-limit" min="0" step="any">
+        <select id="quota-unit"><option value="GB">GB</option><option value="MB">MB</option></select></span>
+      <label for="quota-count">Count</label>
+      <select id="quota-count">
+        <option value="both">Download + upload</option>
+        <option value="download">Download only</option>
+      </select>
+      <label for="quota-source" class="for-router">Count from</label>
+      <select id="quota-source" class="for-router">
+        <option value="pc">This PC</option>
+        <option value="router">Router – the whole network</option>
+      </select>
+      <label for="quota-domestic" class="for-domestic">Domestic traffic</label>
+      <span class="for-domestic"><input type="number" id="quota-domestic" min="0" max="100" step="5"> %
+        <small class="muted">how much it counts: 100 = full, 50 = half price, 0 = free</small></span>
+      <span></span>
+      <span class="form-actions"><button type="submit" class="button">Save quota</button><span class="form-note" id="quota-note"></span></span>
+    </form>
+    <p class="hint" id="quota-hint"></p>
+  </section>
+
+  <section class="panel settings-panel">
+    <h2>Connections</h2>
+    <div class="geoip-row" id="geoip-settings"></div>
+    <label class="switch-row">
+      <span><b>Look up host names</b><small>Ask your DNS server for each address's name (reverse DNS), like <code>google.com</code> instead of only an IP. Turn off to keep these lookups off the network.</small></span>
+      <input type="checkbox" data-setting="rdns_enabled"><i class="switch"></i>
+    </label>
+    <div class="form-grid">
+      <label for="home-country">Home country</label>
+      <span><select id="home-country"></select> <small class="muted">connections to it count as domestic</small></span>
+    </div>
+  </section>
+
+  <section class="panel settings-panel">
+    <h2>Per-program traffic</h2>
+    <label class="switch-row">
+      <span><b>Measure each program's traffic</b><small>With Npcap packet capture: NetMon reads only the packets' headers
+        (addresses, ports, sizes) – no content is kept or sent. Adds programs to the Live page, speeds and UDP
+        destinations to Connections, per-program and domestic usage to Usage.</small></span>
+      <input type="checkbox" data-setting="capture_enabled"><i class="switch"></i>
+    </label>
+    <div class="capture-status" id="capture-status"></div>
+    <label class="switch-row">
+      <span><b>Don't count local network traffic</b><small>Copying files to a NAS, a phone or another PC in your
+        network isn't internet use: leave it out of Usage and the data quota. Needs the packet capture.</small></span>
+      <input type="checkbox" data-setting="usage_exclude_lan"><i class="switch"></i>
+    </label>
+  </section>
+
+  <section class="panel settings-panel">
+    <h2>Integrations</h2>
+    <label class="switch-row">
+      <span><b>MikroTik router</b><small>Show the whole network's internet usage – every device, even while this PC is off – from a MikroTik router through a NetMon relay. Adds a Router tab.</small></span>
+      <input type="checkbox" data-setting="router_enabled"><i class="switch"></i>
+    </label>
+  </section>
+
+  <section class="panel settings-panel">
+    <h2>Ping</h2>
+    <form id="ping-form" class="inline-form" autocomplete="off">
+      <label class="field">Target
+        <input id="ping-target" type="text" spellcheck="false" maxlength="253" placeholder="IP address or host name">
+      </label>
+      <button type="submit" class="button">Apply</button>
+      <span class="form-note" id="ping-note"></span>
+    </form>
+    <div class="ping-readout" id="ping-readout"></div>
+    <p class="hint">An IPv4 address or host name, for example your game server. While the ping widget is shown,
+      NetMon sends it one small ICMP echo (like <code>ping</code>) every second. Statistics cover the last 60 pings.</p>
+  </section>
+
+  <section class="panel settings-panel about">
+    <h2>About</h2>
+    <p><b>NetMon <span id="about-version"></span></b> – a local network monitor for Windows. Everything runs on this PC;
+      no accounts. Free and open source (MIT):
+      <a href="https://github.com/sadi754/netmon" target="_blank" rel="noopener">github.com/sadi754/netmon</a></p>
+    <ul class="credits">
+      <li>IP geolocation by <a href="https://db-ip.com" target="_blank" rel="noopener">DB-IP</a>
+        (<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>), downloaded on request</li>
+      <li>Packet capture: <a href="https://npcap.com" target="_blank" rel="noopener">Npcap</a> (installed separately)</li>
+      <li>Country borders: <a href="https://www.naturalearthdata.com" target="_blank" rel="noopener">Natural Earth</a> (public domain)</li>
+      <li><a href="https://github.com/vasturiano/globe.gl" target="_blank" rel="noopener">globe.gl</a> with
+        <a href="https://threejs.org" target="_blank" rel="noopener">three.js</a>,
+        <a href="https://github.com/leeoniya/uPlot" target="_blank" rel="noopener">uPlot</a>,
+        <a href="https://gitlab.com/catamphetamine/country-flag-icons" target="_blank" rel="noopener">country-flag-icons</a> (MIT)</li>
+      <li>Python: Starlette, uvicorn, websockets, pywebview, pystray, Pillow, maxminddb</li>
+    </ul>
+    <p><button class="button secondary" data-open="log">Open log file</button></p>
+  </section>
+</main>
+
+<main class="view" id="view-live">
+  <section class="cards">
+    <article class="card accent-down">
+      <header><span class="swatch down"></span>Download</header>
+      <div class="big"><span id="down-value">–</span><span class="unit" id="down-unit"></span></div>
+      <footer><span id="down-peak"></span><span id="down-util"></span></footer>
+    </article>
+    <article class="card accent-up">
+      <header><span class="swatch up"></span>Upload</header>
+      <div class="big"><span id="up-value">–</span><span class="unit" id="up-unit"></span></div>
+      <footer><span id="up-peak"></span><span id="up-util"></span></footer>
+    </article>
+    <article class="card">
+      <header>Since NetMon started<span class="spacer"></span><span id="uptime" class="muted"></span></header>
+      <div class="totals">
+        <div><span class="swatch down"></span><span>Downloaded</span><b id="rx-total">–</b></div>
+        <div><span class="swatch up"></span><span>Uploaded</span><b id="tx-total">–</b></div>
+      </div>
+    </article>
+  </section>
+
+  <div class="live-row">
+  <section class="panel chart-panel">
+    <header class="panel-head">
+      <h2>Live traffic</h2>
+      <div class="legend"><span><i class="swatch down"></i>Download</span><span><i class="swatch up"></i>Upload</span></div>
+      <div class="seg" id="range" role="group" aria-label="Time range">
+        <button data-value="60">1 min</button><button data-value="300">5 min</button><button data-value="900">15 min</button><button data-value="3600">1 hour</button>
+      </div>
+    </header>
+    <div id="chart" class="chart"></div>
+  </section>
+  <section class="panel programs-panel">
+    <header class="panel-head"><h2>Programs</h2><span class="spacer"></span><span class="hint" id="programs-more"></span></header>
+    <div class="program-list" id="live-programs"></div>
+  </section>
+  </div>
+
+  <section class="panel">
+    <header class="panel-head">
+      <h2>Adapters</h2>
+      <span class="hint">Virtual adapters (VPN) are shown but not added to “All physical adapters”, so no traffic is counted twice.</span>
+    </header>
+    <table class="table">
+      <thead><tr><th>Adapter</th><th>Type</th><th>Status</th><th class="num">Link</th><th class="num">Download</th><th class="num">Upload</th><th>In total</th></tr></thead>
+      <tbody id="adapter-rows"></tbody>
+    </table>
+  </section>
+</main>
+
+<footer class="statusbar">
+  <span class="status" id="status"><i></i><span>Connecting…</span></span>
+  <span class="muted" id="monitoring"></span>
+  <span class="spacer"></span>
+  <span class="muted">Runs on this PC · no accounts</span>
+  <span class="muted" id="version"></span>
+</footer>
+
+<script src="vendor/uplot/uPlot.iife.min.js"></script>
+<script src="vendor/globe/globe.gl.min.js" defer></script>
+<script src="app.js"></script>
+</body>
+</html>

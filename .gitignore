@@ -1,0 +1,18 @@
+# Python environment and build output
+.venv/
+__pycache__/
+*.pyc
+/build/
+/dist/
+
+# Your own data: settings (may hold the relay token), usage database, GeoIP files, logs
+/data/
+*.log
+
+# Relay: the database and the generated config live only on the web host
+relay/public/data/*
+!relay/public/data/.htaccess
+relay/public/config.php
+
+# Installer test copies
+installer/_test.iss

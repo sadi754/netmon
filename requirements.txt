@@ -1,0 +1,8 @@
+# Python packages NetMon needs. run.bat installs them into .venv automatically.
+starlette==1.8.0     # local web server for the UI (the lightweight core FastAPI is built on)
+uvicorn==0.54.0      # runs the web server
+websockets==17.2     # live data channel between the app and its window
+pywebview==6.2.1     # native window around the UI (uses Edge WebView2, built into Windows)
+pystray==0.19.5      # tray icon
+pillow==12.3.0       # draws the tray icon
+maxminddb==3.2.0     # reads the GeoIP databases (DB-IP) for the Connections tab

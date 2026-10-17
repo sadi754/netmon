@@ -1,0 +1,29 @@
+# NetMon relay (LiteSpeed / Apache). /api/... goes to api.php.
+Options -Indexes
+DirectoryIndex index.html
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+
+  # PHP behind FastCGI/LSAPI often drops the Authorization header - pass it on.
+  RewriteCond %{HTTP:Authorization} .
+  RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+  # Browsers: HTTP -> HTTPS. Never for /api: a redirected POST loses its body.
+  RewriteCond %{HTTPS} !=on
+  RewriteCond %{REQUEST_URI} !^/api/
+  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+
+  RewriteRule ^api/ api.php [L,QSA]
+</IfModule>
+
+# Secrets and the database are never served, whatever the URL.
+<FilesMatch "^(config\.php|.*\.sqlite.*)$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>

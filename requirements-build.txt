@@ -1,0 +1,2 @@
+# Extra Python packages for building NetMon.exe (build.bat installs them into .venv).
+pyinstaller==6.22.3  # packs NetMon and Python into a folder with NetMon.exe
