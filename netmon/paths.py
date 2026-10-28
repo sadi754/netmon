@@ -19,6 +19,7 @@ else:
 ROOT = BUNDLE
 WEB_DIR = BUNDLE / "web"  # the user interface (HTML/CSS/JS + bundled libraries)
 RELAY_TEMPLATE = BUNDLE / "relay" / "router" / "netmon-feed.rsc.template"  # for the Router tab's script maker
+DIRECT_TEMPLATE = BUNDLE / "relay" / "router" / "netmon-direct.rsc.template"  # direct reading: the router's setup
 
 
 def _data_dir() -> Path:

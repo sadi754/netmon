@@ -12,6 +12,7 @@ a = Analysis(
     datas=[
         (str(ROOT / "web"), "web"),  # the window's UI
         (str(ROOT / "relay" / "router" / "netmon-feed.rsc.template"), "relay/router"),  # Router tab script maker
+        (str(ROOT / "relay" / "router" / "netmon-direct.rsc.template"), "relay/router"),
     ],
     # uvicorn picks its event loop and protocols by name at run time; pystray its Windows backend.
     hiddenimports=collect_submodules("uvicorn") + ["pystray._win32"],

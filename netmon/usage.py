@@ -105,11 +105,13 @@ def router_summary(history: History, now: float | None = None) -> dict:
 def router_chart(history: History, kind: str, now: float | None = None) -> dict:
     now = now or time.time()
     spans = periods.buckets(kind, now)
+    estimated = history.router_estimated(spans[0].start, spans[-1].end) if spans else []
     buckets = []
     for p, (rx, tx, *counted) in zip(spans, history.router_series(spans)):
         drx, dtx = _domestic(rx, tx, *counted)
         buckets.append({"start": p.start, "label": p.label, "short": p.short, "rx": rx, "tx": tx,
-                        "drx": drx, "dtx": dtx, "current": p.start <= now < p.end})
+                        "drx": drx, "dtx": dtx, "current": p.start <= now < p.end,
+                        "estimated": any(p.start <= hour < p.end for hour in estimated)})
     return {"range": kind, "buckets": buckets}
 
 

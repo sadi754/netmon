@@ -1,0 +1,14 @@
+# For deploying the NetMon relay with Wrangler (Cloudflare's command-line tool):
+#   npx wrangler d1 create netmon-relay        -> paste the database_id it prints below
+#   npx wrangler deploy
+# Then open https://netmon-relay.<your-subdomain>.workers.dev/setup once.
+# (No Wrangler? See relay/README.md for the dashboard way - copy/paste, no tools.)
+
+name = "netmon-relay"
+main = "worker.js"
+compatibility_date = "2026-09-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "netmon-relay"
+database_id = "PASTE-THE-ID-FROM-d1-create-HERE"

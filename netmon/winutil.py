@@ -1,8 +1,10 @@
 """Small Windows helpers (Win32 API via ctypes)."""
 from __future__ import annotations
 
+import base64
 import ctypes
 import os
+import socket
 from ctypes import wintypes
 
 _user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -15,7 +17,7 @@ _user32.IsWindowVisible.argtypes = [wintypes.HWND]
 _user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
 _user32.GetWindow.restype = wintypes.HWND
 _user32.IsIconic.argtypes = [wintypes.HWND]
-_user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+_user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
 _user32.SetForegroundWindow.argtypes = [wintypes.HWND]
 _user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
 _user32.SendMessageW.restype = wintypes.LPARAM
@@ -29,7 +31,8 @@ _kernel32.CreateMutexW.restype = wintypes.HANDLE
 
 _ERROR_ALREADY_EXISTS = 183
 _GW_OWNER = 4
-_SW_RESTORE = 9
+_WM_SYSCOMMAND = 0x0112
+_SC_RESTORE = 0xF120
 _WM_SETICON = 0x0080
 _SM_CXICON = 11
 _SM_CXSMICON = 49
@@ -150,9 +153,50 @@ def on_screen(x: int, y: int) -> bool:
     return bool(_user32.MonitorFromRect(ctypes.byref(wintypes.RECT(x, y, x + 40, y + 20)), 0))
 
 
+class _MIB_IPFORWARDROW(ctypes.Structure):
+    _fields_ = [("dest", wintypes.DWORD), ("mask", wintypes.DWORD), ("policy", wintypes.DWORD),
+                ("next_hop", wintypes.DWORD), ("if_index", wintypes.DWORD), ("type", wintypes.DWORD),
+                ("proto", wintypes.DWORD), ("age", wintypes.DWORD), ("next_hop_as", wintypes.DWORD),
+                ("metric1", wintypes.DWORD), ("metric2", wintypes.DWORD), ("metric3", wintypes.DWORD),
+                ("metric4", wintypes.DWORD), ("metric5", wintypes.DWORD)]
+
+
+_GetIpForwardTable = ctypes.WinDLL("iphlpapi").GetIpForwardTable
+_GetIpForwardTable.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.ULONG), wintypes.BOOL]
+_GetIpForwardTable.restype = wintypes.DWORD
+
+
+def default_gateway() -> str | None:
+    """The IPv4 router this PC's internet traffic goes to (its default route with the
+    lowest metric), e.g. "192.168.88.1"; None if there is none. VPN routes without a
+    next hop (on-link tunnels) are skipped, so this stays the local network's router."""
+    size = wintypes.ULONG(0)
+    for _ in range(3):  # the table can grow between the two calls
+        buffer = ctypes.create_string_buffer(size.value or 4)
+        result = _GetIpForwardTable(buffer, ctypes.byref(size), False)
+        if result == 0:
+            break
+        if result != 122:  # ERROR_INSUFFICIENT_BUFFER
+            return None
+    else:
+        return None
+    count = wintypes.DWORD.from_buffer(buffer).value
+    rows = (_MIB_IPFORWARDROW * count).from_buffer(buffer, ctypes.sizeof(wintypes.DWORD))
+    defaults = [r for r in rows if r.dest == 0 and r.mask == 0 and r.next_hop != 0]
+    if not defaults:
+        return None
+    best = min(defaults, key=lambda r: r.metric1)
+    return socket.inet_ntoa(best.next_hop.to_bytes(4, "little"))  # stored in network byte order
+
+
+def is_minimized(hwnd: int) -> bool:
+    return bool(_user32.IsIconic(hwnd))
+
+
 def bring_to_front(hwnd: int) -> None:
     if _user32.IsIconic(hwnd):
-        _user32.ShowWindow(hwnd, _SW_RESTORE)
+        # what a taskbar click does; ShowWindow(SW_RESTORE) from another process often leaves WebView2 unpainted
+        _user32.PostMessageW(hwnd, _WM_SYSCOMMAND, _SC_RESTORE, 0)
     _user32.SetForegroundWindow(hwnd)
 
 
@@ -181,3 +225,102 @@ def destroy_icon(hicon: int) -> None:
 def set_window_icon(hwnd: int, small: int, big: int) -> None:
     _user32.SendMessageW(hwnd, _WM_SETICON, 0, small)  # ICON_SMALL: title bar
     _user32.SendMessageW(hwnd, _WM_SETICON, 1, big)    # ICON_BIG: taskbar, Alt+Tab
+
+
+class _DATA_BLOB(ctypes.Structure):
+    _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+
+_crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
+_crypt32.CryptProtectData.argtypes = [ctypes.POINTER(_DATA_BLOB), wintypes.LPCWSTR, ctypes.c_void_p,
+                                      ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(_DATA_BLOB)]
+_crypt32.CryptUnprotectData.argtypes = [ctypes.POINTER(_DATA_BLOB), ctypes.c_void_p, ctypes.c_void_p,
+                                        ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(_DATA_BLOB)]
+_kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+_CRYPTPROTECT_UI_FORBIDDEN = 0x1
+
+
+def _dpapi(data: bytes, protect: bool) -> bytes:
+    buffer = ctypes.create_string_buffer(data, len(data))
+    blob_in = _DATA_BLOB(len(data), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_char)))
+    blob_out = _DATA_BLOB()
+    if protect:
+        ok = _crypt32.CryptProtectData(ctypes.byref(blob_in), "NetMon", None, None, None,
+                                       _CRYPTPROTECT_UI_FORBIDDEN, ctypes.byref(blob_out))
+    else:
+        ok = _crypt32.CryptUnprotectData(ctypes.byref(blob_in), None, None, None, None,
+                                         _CRYPTPROTECT_UI_FORBIDDEN, ctypes.byref(blob_out))
+    if not ok:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        return ctypes.string_at(blob_out.pbData, blob_out.cbData)
+    finally:
+        _kernel32.LocalFree(blob_out.pbData)
+
+
+def protect(text: str) -> str:
+    """Encrypt a secret so only this Windows user on this PC can read it back (DPAPI)."""
+    return base64.b64encode(_dpapi(text.encode("utf-8"), True)).decode("ascii") if text else ""
+
+
+def unprotect(blob: str) -> str:
+    """protect() undone; "" if it can't be read (another user or PC)."""
+    if not blob:
+        return ""
+    try:
+        return _dpapi(base64.b64decode(blob), False).decode("utf-8")
+    except (OSError, ValueError):
+        return ""
+
+
+class _BITMAPINFOHEADER(ctypes.Structure):
+    _fields_ = [("biSize", wintypes.DWORD), ("biWidth", wintypes.LONG), ("biHeight", wintypes.LONG),
+                ("biPlanes", wintypes.WORD), ("biBitCount", wintypes.WORD), ("biCompression", wintypes.DWORD),
+                ("biSizeImage", wintypes.DWORD), ("biXPelsPerMeter", wintypes.LONG),
+                ("biYPelsPerMeter", wintypes.LONG), ("biClrUsed", wintypes.DWORD), ("biClrImportant", wintypes.DWORD)]
+
+
+_gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+_user32.GetDC.argtypes = [wintypes.HWND]
+_user32.GetDC.restype = wintypes.HDC
+_user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+_user32.GetClientRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+_user32.PrintWindow.argtypes = [wintypes.HWND, wintypes.HDC, wintypes.UINT]
+_gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
+_gdi32.CreateCompatibleDC.restype = wintypes.HDC
+_gdi32.CreateCompatibleBitmap.argtypes = [wintypes.HDC, ctypes.c_int, ctypes.c_int]
+_gdi32.CreateCompatibleBitmap.restype = wintypes.HBITMAP
+_gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
+_gdi32.SelectObject.restype = wintypes.HGDIOBJ
+_gdi32.GetDIBits.argtypes = [wintypes.HDC, wintypes.HBITMAP, wintypes.UINT, wintypes.UINT, ctypes.c_void_p,
+                             ctypes.c_void_p, wintypes.UINT]
+_gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+_gdi32.DeleteDC.argtypes = [wintypes.HDC]
+_PW_CLIENTONLY, _PW_RENDERFULLCONTENT = 0x1, 0x2
+
+
+def window_pixels(hwnd: int) -> tuple[int, int, bytes] | None:
+    """What a window of THIS process shows in its client area, as (width, height, BGRA bytes),
+    including content drawn by a browser engine (PrintWindow with PW_RENDERFULLCONTENT)."""
+    rect = wintypes.RECT()
+    if not _user32.GetClientRect(hwnd, ctypes.byref(rect)) or rect.right <= 0 or rect.bottom <= 0:
+        return None
+    width, height = rect.right, rect.bottom
+    screen = _user32.GetDC(None)
+    memory = _gdi32.CreateCompatibleDC(screen)
+    bitmap = _gdi32.CreateCompatibleBitmap(screen, width, height)
+    previous = _gdi32.SelectObject(memory, bitmap)
+    try:
+        if not _user32.PrintWindow(hwnd, memory, _PW_CLIENTONLY | _PW_RENDERFULLCONTENT):
+            return None
+        header = _BITMAPINFOHEADER(ctypes.sizeof(_BITMAPINFOHEADER), width, -height, 1, 32)  # top-down BGRA
+        pixels = ctypes.create_string_buffer(width * height * 4)
+        _gdi32.SelectObject(memory, previous)
+        if not _gdi32.GetDIBits(memory, bitmap, 0, height, pixels, ctypes.byref(header), 0):
+            return None
+        return width, height, pixels.raw
+    finally:
+        _gdi32.SelectObject(memory, previous)  # a bitmap still selected into a DC can't be deleted
+        _gdi32.DeleteObject(bitmap)
+        _gdi32.DeleteDC(memory)
+        _user32.ReleaseDC(None, screen)

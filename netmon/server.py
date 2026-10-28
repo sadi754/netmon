@@ -27,15 +27,18 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from . import __version__, autostart, export, jalali, periods, router as router_mod, routerscript, usage, winutil
+from . import (__version__, autostart, export, jalali, periods, pinghistory, router as router_mod, routerdirect,
+               routerscript, usage, winutil)
 from .connwatch import ConnectionWatcher
 from .geoip import GeoIP
 from .history import History
 from .monitor import Monitor
 from .paths import DATA_DIR, FROZEN, WEB_DIR
 from .ping import Pinger, PingStats
+from .pinghistory import PingRecorder
 from .router import RouterLink
-from .settings import CONN_VIEWS, MAP_VIEWS, QUOTA_COUNTS, QUOTA_PERIODS, QUOTA_SOURCES, UNITS, is_country_code
+from .settings import (CONN_VIEWS, MAP_VIEWS, QUOTA_COUNTS, QUOTA_PERIODS, QUOTA_SOURCES, ROUTER_MODES, UNITS,
+                       is_country_code)
 from .speed import Tick
 from .traffic import TrafficMonitor
 
@@ -44,6 +47,8 @@ log = logging.getLogger(__name__)
 _HOST = re.compile(r"^[A-Za-z0-9.\-:]{1,253}$")
 _RELAY_URL = re.compile(r"^https?://[A-Za-z0-9.\-]+(:\d+)?(/[\w.\-/]*)?$")
 _TOKEN = re.compile(r"^[A-Za-z0-9_\-]{16,128}$")
+_ROUTER_HOST = re.compile(r"^(https?://)?[A-Za-z0-9.\-]{1,253}(:\d{1,5})?$")
+_ROUTEROS_NAME = re.compile(r"^[\w.\-]{1,64}$")
 
 
 def _is_number(v) -> bool:
@@ -65,6 +70,8 @@ _EDITABLE: dict[str, Callable[[object], bool]] = {
     "ping_visible": lambda v: isinstance(v, bool),
     "hide_in_fullscreen": lambda v: isinstance(v, bool),
     "ping_target": lambda v: isinstance(v, str) and bool(_HOST.match(v.strip())),
+    "ping_gateway": lambda v: isinstance(v, str) and (v.strip() == "" or bool(_HOST.match(v.strip()))),
+    "ping_record": lambda v: isinstance(v, bool),
     "quota_enabled": lambda v: isinstance(v, bool),
     "quota_period": lambda v: v in QUOTA_PERIODS,
     "quota_days": lambda v: _is_number(v) and v == int(v) and 1 <= v <= 366,
@@ -76,6 +83,11 @@ _EDITABLE: dict[str, Callable[[object], bool]] = {
     "router_enabled": lambda v: isinstance(v, bool),
     "router_url": lambda v: isinstance(v, str) and (v == "" or bool(_RELAY_URL.match(v.strip()))),
     "router_token": lambda v: isinstance(v, str) and (v == "" or bool(_TOKEN.match(v.strip()))),
+    "router_mode": lambda v: v in ROUTER_MODES,
+    "router_host": lambda v: isinstance(v, str) and (v == "" or bool(_ROUTER_HOST.match(v.strip()))),
+    "router_wan": lambda v: isinstance(v, str) and (v == "" or bool(_ROUTEROS_NAME.match(v.strip()))),
+    "router_user": lambda v: isinstance(v, str) and bool(_ROUTEROS_NAME.match(v.strip())),
+    "router_password": lambda v: isinstance(v, str) and 0 < len(v) <= 128,  # stored encrypted (app.py)
     "rdns_enabled": lambda v: isinstance(v, bool),
     "home_country": is_country_code,
     "conn_hide_local": lambda v: isinstance(v, bool),
@@ -107,11 +119,12 @@ def _ignore_dropped_connections(loop: asyncio.AbstractEventLoop, context: dict) 
 
 
 class WebServer:
-    def __init__(self, monitor: Monitor, pinger: Pinger, history: History, router: RouterLink,
-                 connections: ConnectionWatcher, geoip: GeoIP, traffic: TrafficMonitor,
+    def __init__(self, monitor: Monitor, pinger: Pinger, recorder: PingRecorder, history: History,
+                 router: RouterLink, connections: ConnectionWatcher, geoip: GeoIP, traffic: TrafficMonitor,
                  on_show: Callable[[], None], on_settings: Callable[[dict], None]):
         self.monitor = monitor
         self.pinger = pinger
+        self.recorder = recorder
         self.history = history
         self.router = router
         self.connections = connections
@@ -146,6 +159,7 @@ class WebServer:
         self._thread = threading.Thread(target=self._run, name="web", daemon=True)
         monitor.subscribe(self._on_tick)
         pinger.subscribe(self._on_ping)
+        recorder.listeners.append(self._on_ping_saved)
         connections.listeners.append(self._on_connections)
         geoip.listeners.append(self.publish_geoip)
         traffic.live_listeners.append(self._on_programs)
@@ -302,6 +316,17 @@ class WebServer:
             report = await asyncio.to_thread(usage.router_chart, self.history, message["range"])
             self._send(queue, {"type": "router_usage", **report})
             return
+        if kind == "router_test" and message.get("mode") == "direct":
+            s = self.monitor.settings
+            host, wan = str(message.get("host", "")).strip(), str(message.get("wan", "")).strip()
+            password = str(message.get("password") or "") or winutil.unprotect(s.router_password)
+            if not _ROUTER_HOST.match(host) or not _ROUTEROS_NAME.match(wan) or not password:
+                result = {"ok": False, "message": "Enter the router's address and internet interface, "
+                                                  "and make the setup script first (it sets the password)."}
+            else:
+                result = await asyncio.to_thread(routerdirect.test, host, s.router_user, password, wan)
+            self._send(queue, {"type": "router_test", **result})
+            return
         if kind == "router_test":
             url, token = str(message.get("url", "")).strip(), str(message.get("token", "")).strip()
             if not _RELAY_URL.match(url) or not _TOKEN.match(token):
@@ -309,6 +334,10 @@ class WebServer:
             else:
                 result = await asyncio.to_thread(router_mod.test, url, token)
             self._send(queue, {"type": "router_test", **result})
+            return
+        if kind == "ping_history" and message.get("range") in pinghistory.RANGES:
+            report = await asyncio.to_thread(pinghistory.report, self.history, self.recorder, message["range"])
+            self._send(queue, {"type": "ping_history", **report})
             return
         if kind == "connections_watch":
             self._watch(queue, bool(message.get("on")))
@@ -333,6 +362,34 @@ class WebServer:
         if kind == "delete_history":
             await asyncio.to_thread(self.history.clear_usage)
             self._send(queue, await asyncio.to_thread(self._system_message))
+            return
+        if kind == "delete_ping_history":
+            self.recorder.clear()
+            await asyncio.to_thread(self.history.clear_ping)
+            self._send(queue, await asyncio.to_thread(self._system_message))
+            self._broadcast({"type": "ping_saved"})  # an open Ping tab empties
+            return
+        if kind == "router_direct_script":
+            host, wan = str(message.get("host", "")).strip(), str(message.get("wan", "")).strip()
+            try:
+                if not _ROUTER_HOST.match(host):
+                    raise ValueError("Router address: its IP in your local network, e.g. 192.168.88.1")
+                allow = await asyncio.to_thread(routerscript.local_network, host)
+                password = secrets.token_urlsafe(18)
+                script = routerscript.render_direct(wan, str(message.get("list", "")), password, allow)
+            except OSError:
+                self._send(queue, {"type": "router_script", "for": "direct", "ok": False,
+                                   "message": "This PC has no route to that address - check the router's IP."})
+                return
+            except ValueError as e:
+                self._send(queue, {"type": "router_script", "for": "direct", "ok": False, "message": str(e)})
+                return
+            # The script sets this password on the router; NetMon keeps it (encrypted) to read with.
+            self.on_settings({"router_mode": "direct", "router_host": host, "router_wan": wan,
+                              "router_user": "netmon", "router_password": password})
+            self.monitor.settings.save()
+            self._broadcast_settings()
+            self._send(queue, {"type": "router_script", "for": "direct", "ok": True, "script": script})
             return
         if kind == "router_script":
             try:
@@ -367,6 +424,10 @@ class WebServer:
 
     def _on_ping(self, stats: PingStats) -> None:
         self._from_thread(self._broadcast, {"type": "ping", **stats.as_dict()})
+
+    def _on_ping_saved(self) -> None:
+        """A minute of pings was saved, or an outage began or ended: an open Ping tab refreshes."""
+        self._from_thread(self._broadcast, {"type": "ping_saved"})
 
     def publish_usage(self) -> None:
         """New usage was saved (once a minute) or the quota changed: refresh the window."""
@@ -442,8 +503,14 @@ class WebServer:
         for queue in self._watching:
             self._send(queue, text)
 
+    def _public_settings(self) -> dict:
+        """Settings for the window - without the router password (it only learns whether one is set)."""
+        settings = asdict(self.monitor.settings)
+        settings["router_password_set"] = bool(settings.pop("router_password"))
+        return settings
+
     def _broadcast_settings(self) -> None:
-        self._broadcast({"type": "settings", "settings": asdict(self.monitor.settings)})
+        self._broadcast({"type": "settings", "settings": self._public_settings()})
 
     def _broadcast(self, message: dict) -> None:
         text = json.dumps(message)
@@ -466,10 +533,11 @@ class WebServer:
             "type": "hello",
             "version": __version__,
             "started": m.started,
-            "settings": asdict(m.settings),
+            "settings": self._public_settings(),
             "history": list(m.history),
             "tick": self._tick_message(m.last) if m.last else None,
             "ping": self.pinger.stats.as_dict(),
+            "ping_gateway": self.pinger.gateway_stats.as_dict(),
             "usage": usage_now,
             "router": router_now,
             "geoip": self.geoip.status(),

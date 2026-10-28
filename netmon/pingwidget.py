@@ -139,7 +139,7 @@ class PingWidget(FloatingWidget):
         self._above = above  # first time shown, sit just above this widget (the mini graph)
         super().__init__(settings, on_open)
         self.listeners.append(pinger.wake)  # shown/hidden -> start/stop pinging right away
-        pinger.subscribe(lambda stats: self.redraw())
+        pinger.subscribe(lambda stats: stats.kind == "internet" and self.redraw())  # the widget shows the internet target
 
     def render(self, scale: float) -> Image.Image:
         stats = self._pinger.stats

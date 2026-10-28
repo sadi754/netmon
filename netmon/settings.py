@@ -16,6 +16,7 @@ QUOTA_COUNTS = ("both", "download")
 QUOTA_SOURCES = ("pc", "router")
 CONN_VIEWS = ("list", "apps")
 MAP_VIEWS = ("2d", "3d")
+ROUTER_MODES = ("relay", "direct")
 
 log = logging.getLogger(__name__)
 _save_lock = threading.Lock()  # the window, tray and mini graph may all save at once
@@ -37,13 +38,16 @@ class Settings:
     mini_opacity: float = 0.9
     mini_docked: bool = False    # sitting on the taskbar?
     mini_dock_x: int | None = None  # ... this many pixels from the taskbar's left end
-    ping_visible: bool = True    # floating ping widget shown? (it only pings while shown)
+    ping_visible: bool = True    # floating ping widget shown?
     ping_x: int | None = None
     ping_y: int | None = None
     ping_opacity: float = 0.9
     ping_docked: bool = False
     ping_dock_x: int | None = None
-    ping_target: str = "8.8.8.8"
+    ping_target: str = "8.8.8.8"     # the internet target
+    ping_gateway: str = ""           # the local router to ping too; "" = the default gateway, found automatically
+    ping_record: bool = True         # keep pinging in the background and record the Ping tab's history
+                                     # (off: NetMon only pings while the ping widget is shown)
     hide_in_fullscreen: bool = True  # hide the widgets while a game/video is full-screen
     quota_enabled: bool = False
     quota_period: str = "month"      # "month" (Jalali), "days" (N days from quota_start) or "day"
@@ -56,6 +60,11 @@ class Settings:
     router_enabled: bool = False     # Settings -> Integrations: MikroTik router (shows the Router tab)
     router_url: str = ""             # the NetMon relay, e.g. https://netmon.example.com
     router_token: str = ""           # the relay's READ token
+    router_mode: str = "relay"       # "relay" (the router reports to a NetMon relay) or "direct" (NetMon reads the router)
+    router_host: str = ""            # direct: the router's address in the local network, e.g. 192.168.88.1
+    router_user: str = "netmon"      # direct: a read-only RouterOS user for the REST API
+    router_password: str = ""        # direct: its password, encrypted for this Windows user (DPAPI)
+    router_wan: str = ""             # direct: the internet interface, e.g. pppoe-out1
     rdns_enabled: bool = True        # look up host names of connections (reverse DNS)
     home_country: str = ""           # ISO code ("IR") for "domestic"; "" = the country set in Windows
     conn_hide_local: bool = True     # Connections tab: hide this PC's own and LAN connections
@@ -101,6 +110,8 @@ class Settings:
             settings.conn_view = "list"
         if settings.map_view not in MAP_VIEWS:
             settings.map_view = "2d"
+        if settings.router_mode not in ROUTER_MODES:
+            settings.router_mode = "relay"
         for widget in ("mini", "ping"):
             opacity = getattr(settings, f"{widget}_opacity")
             if not isinstance(opacity, (int, float)) or not 0.2 <= opacity <= 1:

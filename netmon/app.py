@@ -19,6 +19,7 @@ from .monitor import Monitor
 from .names import Names
 from .paths import DATA_DIR
 from .ping import Pinger
+from .pinghistory import PingRecorder
 from .pingwidget import PingWidget
 from .router import RouterLink
 from .server import WebServer
@@ -93,9 +94,11 @@ def run(minimized: bool = False, debug: bool = False) -> None:
         log.warning("Couldn't check the Windows start-up entry", exc_info=True)
     settings = Settings.load()
     monitor = Monitor(settings)
-    pinger = Pinger(settings)
     history = History()
     monitor.subscribe(history.on_tick)
+    pinger = Pinger(settings)
+    recorder = PingRecorder(history)
+    pinger.echo_listeners.append(lambda echo: settings.ping_record and recorder.on_echo(echo))
     router_link = RouterLink(settings, history)
     geoip = GeoIP()
     apps, names = AppCatalog(), Names()
@@ -113,15 +116,20 @@ def run(minimized: bool = False, debug: bool = False) -> None:
                 mini.set_visible(value)
             elif key == "ping_visible":
                 ping_widget.set_visible(value)
-            elif key == "ping_target":
-                settings.ping_target = value.strip()
+            elif key in ("ping_target", "ping_gateway"):
+                setattr(settings, key, value.strip())
+                pinger.wake()
+            elif key == "ping_record":
+                settings.ping_record = value
                 pinger.wake()
             elif key == "quota_limit_gb":
                 settings.quota_limit_gb = float(value)
             elif key in ("quota_days", "quota_domestic_percent"):
                 setattr(settings, key, int(value))
-            elif key in ("router_url", "router_token"):
+            elif key in ("router_url", "router_token", "router_host", "router_wan", "router_user"):
                 setattr(settings, key, value.strip())
+            elif key == "router_password":
+                settings.router_password = winutil.protect(value)  # only this Windows user can read it back
             else:
                 setattr(settings, key, value)
         if any(key.startswith("router_") for key in changes):
@@ -133,7 +141,7 @@ def run(minimized: bool = False, debug: bool = False) -> None:
         if any(key.startswith(("quota_", "router_", "usage_")) or key == "adapter" for key in changes):
             history.submit(after_save)  # recheck the quota and refresh the Usage page now
 
-    server = WebServer(monitor, pinger, history, router_link, connections, geoip, traffic,
+    server = WebServer(monitor, pinger, recorder, history, router_link, connections, geoip, traffic,
                        on_show=window.open, on_settings=apply_settings)
     window.url = server.url
 
@@ -187,5 +195,6 @@ def run(minimized: bool = False, debug: bool = False) -> None:
         server.stop()   # closes the window's connection cleanly before the window goes
         window.close()
         traffic.close()  # its last partial minute goes to the history...
+        recorder.close()  # ... so do the pings of this minute ...
         history.close()  # ... which saves its own and closes
         INSTANCE_FILE.unlink(missing_ok=True)

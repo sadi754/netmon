@@ -1,7 +1,9 @@
-"""Whole-network usage from a MikroTik router, collected by the NetMon relay.
+"""Whole-network usage from a MikroTik router.
 
-Once a minute (while the integration is on) NetMon asks the relay for the rows
-it hasn't seen yet and stores them; the relay keeps recording while the PC is off.
+Two ways, chosen in the Router tab:
+- relay: the router reports to a NetMon relay every minute; once a minute NetMon asks
+  the relay for the rows it hasn't seen yet. The relay keeps recording while the PC is off.
+- direct: NetMon reads the router itself (routerdirect.py), no server needed.
 """
 from __future__ import annotations
 
@@ -14,12 +16,13 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable
 
-from . import __version__
+from . import __version__, routerdirect, winutil
 from .history import History
 from .settings import Settings
 
 INTERVAL = 60      # seconds between syncs
 STALE_AFTER = 300  # the router is "late" when the relay hasn't heard from it for this long
+SHOW_GAPS = 7 * 86400  # direct: mention router restarts that lost traffic for this long
 
 log = logging.getLogger(__name__)
 
@@ -83,8 +86,14 @@ class RouterLink:
             s = self._settings
             if not s.router_enabled:
                 self.status = {"state": "off"}
+            elif s.router_mode == "direct":
+                password = winutil.unprotect(s.router_password)
+                if not (s.router_host and s.router_user and password and s.router_wan):
+                    self.status = {"state": "setup", "mode": "direct"}
+                else:
+                    self._read_router(s.router_host, s.router_user, password, s.router_wan)
             elif not (s.router_url and s.router_token):
-                self.status = {"state": "setup"}
+                self.status = {"state": "setup", "mode": "relay"}
             else:
                 self._sync(s.router_url, s.router_token)
             for listener in self.listeners:
@@ -94,6 +103,26 @@ class RouterLink:
                     log.exception("Router listener failed")
             self._wake.wait(INTERVAL)
             self._wake.clear()
+
+    def _read_router(self, host: str, user: str, password: str, wan: str) -> None:
+        now = time.time()
+        try:
+            result = routerdirect.collect(self._history, host, user, password, wan, now)
+        except routerdirect.RouterError as e:
+            self.status = {"state": "error", "mode": "direct", "message": str(e), "checked": now}
+            return
+        except (KeyError, TypeError, ValueError):
+            log.exception("Reading the router failed")
+            self.status = {"state": "error", "mode": "direct", "message": "The router's answer wasn't understood.",
+                           "checked": now}
+            return
+        r = result["reading"]
+        gaps = [g for g in result["gaps"] if now - g["to"] < SHOW_GAPS]
+        self.status = {"state": "ok", "mode": "direct", "lag": 0, "checked": now, "gaps": gaps,
+                       "routers": [{"router": r["router"], "iface": r["iface"], "uptime": r["uptime"],
+                                    "last_seen": now, "rules": r["rules"]}]}
+        if result["stored"] and result["stored"]["span"] > 300:
+            log.info("Router: read %s after %.0f min", r["router"], result["stored"]["span"] / 60)
 
     def _sync(self, url: str, token: str) -> None:
         try:

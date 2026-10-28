@@ -1,0 +1,47 @@
+# NetMon direct reading - setup for MikroTik RouterOS 7.1+ (paste into Winbox -> New Terminal).
+#
+# Lets NetMon read the byte counters of your internet interface over the router's
+# REST API, inside your local network. No server, nothing leaves your network.
+#
+#   internet interface: {{WAN}}
+#   allowed from:       {{ALLOW}}
+{{LIST_COMMENT}}
+#
+# What it does:
+#   - a user group "netmon-read" that may only read (REST API over the www service), and a user "netmon" in it,
+#     allowed to log in from {{ALLOW}} only
+#   - turns on the "www" service (http, port 80) for {{ALLOW}} - only if it was off;
+#     if it is already on, it is left as it is
+#
+# NetMon reads the router once a minute while it runs. The router keeps counting while
+# your PC is off, so that traffic still arrives (shared out evenly over those hours).
+# If the router restarts while NetMon isn't reading, the traffic between the last
+# reading and the restart can't be known.
+#
+# To remove it later:
+#   /user remove [find name="netmon"]
+#   /user group remove [find name="netmon-read"]
+# and the counting rules - only if no NetMon relay script uses them too:
+#   /ip firewall mangle remove [find comment~"^netmon:"]
+
+{{MANGLE}}
+:do { /user remove [find name="netmon"] } on-error={}
+:do { /user group remove [find name="netmon-read"] } on-error={}
+:do {
+  /user group add name="netmon-read" policy=read,web,rest-api comment="NetMon: read-only REST API"
+} on-error={
+  /user group add name="netmon-read" policy=read,api,web comment="NetMon: read-only REST API"
+}
+/user add name="netmon" group="netmon-read" password="{{PASSWORD}}" address={{ALLOW}} comment="NetMon (read-only)"
+
+:if ([/ip service get [find name="www"] disabled]) do={
+  /ip service set [find name="www"] disabled=no address={{ALLOW}}
+  :put "NetMon: turned on the www service for {{ALLOW}} only."
+} else={
+  :put "NetMon: the www service was already on - left as it is (make sure it allows {{ALLOW}})."
+}
+
+:if ([:len [/ip firewall filter find action=fasttrack-connection disabled=no]] > 0) do={
+  :put "NOTE: FastTrack is on. Fast-tracked connections skip the mangle counting rules, so the domestic share will read too low (the totals are still right)."
+}
+:put "NetMon setup done. In NetMon's Router tab, press Test."

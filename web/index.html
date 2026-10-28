@@ -13,6 +13,7 @@
   <nav class="tabs">
     <a class="tab" href="#live" data-view="live">Live</a>
     <a class="tab" href="#usage" data-view="usage">Usage</a>
+    <a class="tab" href="#ping" data-view="ping">Ping</a>
     <a class="tab" href="#router" data-view="router" id="router-tab" hidden>Router</a>
     <a class="tab" href="#connections" data-view="connections">Connections</a>
     <a class="tab" href="#map" data-view="map">Map</a>
@@ -60,6 +61,34 @@
   </section>
 </main>
 
+<main class="view" id="view-ping" hidden>
+  <section class="ping-banner" id="ping-off" hidden>Ping history isn't being recorded.
+    <a class="link" href="#settings">Turn it on in Settings → Ping</a></section>
+  <section class="cards two" id="ping-cards"></section>
+  <section class="panel ping-panel">
+    <header class="panel-head">
+      <h2>Ping history</h2>
+      <div class="legend">
+        <span><i class="swatch inet"></i>Internet</span><span><i class="swatch gw"></i>Gateway</span>
+        <span class="band-key" id="ping-band-key"><i class="swatch band"></i>min – p95</span>
+        <span><i class="swatch loss"></i>Lost pings · outage</span>
+      </div>
+      <div class="seg" id="ping-range" role="group" aria-label="Period">
+        <button data-value="1h">1 hour</button><button data-value="24h">24 hours</button><button data-value="7d">7 days</button><button data-value="30d">30 days</button>
+      </div>
+    </header>
+    <div id="ping-chart" class="chart ping-chart"></div>
+    <p class="hint" id="ping-hint"></p>
+  </section>
+  <section class="panel ping-outages-panel">
+    <header class="panel-head">
+      <h2>Outages</h2>
+      <span class="hint">3 or more pings lost in a row; it ends with the first reply.</span>
+    </header>
+    <div class="table-wrap" id="ping-outages"></div>
+  </section>
+</main>
+
 <main class="view" id="view-router" hidden>
   <section class="router-status" id="router-status"></section>
   <section class="cards three" id="router-cards"></section>
@@ -80,18 +109,50 @@
     </header>
     <div id="router-chart" class="bar-chart"></div>
     <div id="router-table" class="table-wrap" hidden></div>
-    <p class="hint">Everything that went through the router's internet connection – all devices – including hours when this PC was off.</p>
+    <p class="hint" id="router-hint">Everything that went through the router's internet connection – all devices – including hours when this PC was off.</p>
   </section>
 
   <section class="panel settings-panel" id="router-connection">
     <h2>Connection</h2>
-    <p class="hint">NetMon reads your router's traffic from a <b>NetMon relay</b>: a small PHP program on a web host
-      that your MikroTik reports to every minute. See <code>relay/README.md</code> to host your own.</p>
+    <div class="seg router-way" id="router-way" role="group" aria-label="How NetMon gets the router's data">
+      <button data-value="direct">Direct – no server</button><button data-value="relay">Through a relay</button>
+    </div>
+
+    <div id="router-direct">
+      <p class="hint">NetMon reads the router itself, in your local network, once a minute while it runs (RouterOS 7.1 or
+        newer, over its REST API). The router keeps counting while this PC is off, so that traffic still arrives – shared
+        out evenly over those hours and marked as an estimate. <b>If the router restarts while NetMon isn't running, the
+        traffic since NetMon's last reading is lost.</b> For a record that never misses anything, use a relay.</p>
+      <form id="direct-form" class="form-grid" autocomplete="off">
+        <label for="direct-host">Router address</label>
+        <span><input type="text" id="direct-host" placeholder="192.168.88.1" spellcheck="false"> <small class="muted">its IP in your local network</small></span>
+        <label for="direct-wan">Internet interface</label>
+        <span><input type="text" id="direct-wan" value="pppoe-out1" spellcheck="false"> <small class="muted">the interface towards your ISP</small></span>
+        <label for="direct-list">Domestic list</label>
+        <span><input type="text" id="direct-list" placeholder="e.g. IP-IR (optional)" spellcheck="false"> <small class="muted">an address list of your country's IP ranges</small></span>
+        <span></span>
+        <span class="form-actions">
+          <button type="submit" class="button">Make setup script</button>
+          <button type="button" class="button secondary" id="direct-copy" disabled>Copy</button>
+          <button type="button" class="button secondary" id="direct-test">Test</button>
+          <span class="form-note" id="direct-note"></span>
+        </span>
+      </form>
+      <textarea id="direct-output" readonly spellcheck="false" hidden></textarea>
+      <p class="hint">Paste the script into the router's terminal (Winbox → New Terminal), then press Test. It makes a
+        read-only user “netmon” with a random password – NetMon keeps it encrypted for your Windows user – and, if it's
+        off, turns on the router's “www” service for your local network only.</p>
+    </div>
+
+    <div id="router-relay">
+    <p class="hint">NetMon reads your router's traffic from a <b>NetMon relay</b>: a small program on a web host (PHP, or
+      Cloudflare) that your MikroTik reports to every minute – so nothing is missed while this PC is off. See
+      <a href="https://github.com/sadi754/netmon/blob/main/relay/README.md" target="_blank" rel="noopener">relay/README.md</a> to host your own.</p>
     <form id="router-form" class="form-grid" autocomplete="off">
       <label for="router-url">Relay address</label>
       <input type="text" id="router-url" placeholder="https://netmon.example.com" spellcheck="false">
       <label for="router-token">Read token</label>
-      <input type="password" id="router-token" placeholder="READ_TOKEN from relay/deploy.py --init" spellcheck="false">
+      <input type="password" id="router-token" placeholder="the read token (from the relay's setup page)" spellcheck="false">
       <span></span>
       <span class="form-actions">
         <button type="submit" class="button">Save</button>
@@ -109,12 +170,13 @@
         <label for="script-list">Domestic list</label>
         <span><input type="text" id="script-list" placeholder="e.g. IP-IR (optional)" spellcheck="false"> <small class="muted">an address list of your country's IP ranges</small></span>
         <label for="script-token">Router token</label>
-        <span><input type="password" id="script-token" placeholder="INGEST_TOKEN" spellcheck="false"> <small class="muted">not stored</small></span>
+        <span><input type="password" id="script-token" placeholder="the router token (from the setup page)" spellcheck="false"> <small class="muted">not stored</small></span>
         <span></span>
         <span class="form-actions"><button type="submit" class="button">Make script</button><button type="button" class="button secondary" id="script-copy" disabled>Copy</button><span class="form-note" id="script-note"></span></span>
       </form>
       <textarea id="script-output" readonly spellcheck="false" hidden></textarea>
     </details>
+    </div>
   </section>
 </main>
 
@@ -320,16 +382,29 @@
 
   <section class="panel settings-panel">
     <h2>Ping</h2>
-    <form id="ping-form" class="inline-form" autocomplete="off">
-      <label class="field">Target
-        <input id="ping-target" type="text" spellcheck="false" maxlength="253" placeholder="IP address or host name">
-      </label>
-      <button type="submit" class="button">Apply</button>
-      <span class="form-note" id="ping-note"></span>
+    <form id="ping-form" class="form-grid" autocomplete="off">
+      <label for="ping-target">Internet target</label>
+      <span><input id="ping-target" type="text" spellcheck="false" maxlength="253" placeholder="IP address or host name">
+        <small class="muted">e.g. 8.8.8.8, or your game server</small></span>
+      <label for="ping-gateway">Gateway</label>
+      <span><input id="ping-gateway" type="text" spellcheck="false" maxlength="253" placeholder="Automatic">
+        <small class="muted">your router – leave empty to find it automatically</small></span>
+      <span></span>
+      <span class="form-actions"><button type="submit" class="button">Apply</button><span class="form-note" id="ping-note"></span></span>
     </form>
     <div class="ping-readout" id="ping-readout"></div>
-    <p class="hint">An IPv4 address or host name, for example your game server. While the ping widget is shown,
-      NetMon sends it one small ICMP echo (like <code>ping</code>) every second. Statistics cover the last 60 pings.</p>
+    <label class="switch-row">
+      <span><b>Record ping history</b><small>Ping both every second in the background – also while the widget is hidden – for
+        the Ping tab: delay, lost pings and outages. About 10 MB of internet traffic a day.</small></span>
+      <input type="checkbox" data-setting="ping_record"><i class="switch"></i>
+    </label>
+    <div class="setting-line">
+      <span><b>Delete ping history</b><small>Every recorded ping and outage. Your usage history stays.</small></span>
+      <button class="button danger" id="delete-ping">Delete…</button>
+    </div>
+    <p class="hint">An IPv4 address or host name. NetMon sends it one small ICMP echo (like <code>ping</code>) every
+      second; no answer within 2 seconds counts as lost. Pinging the gateway too tells a problem in your own network from
+      one further out. Single pings are kept for 7 days, per-minute statistics and outages for good.</p>
   </section>
 
   <section class="panel settings-panel about">

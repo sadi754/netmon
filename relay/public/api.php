@@ -12,9 +12,15 @@
 //
 // The router sends its cumulative counters (they only grow), not differences,
 // so a missed post loses nothing: the next one covers the gap. Counters restart
-// when the router reboots or the PPPoE link reconnects; that is detected here.
+// when the router reboots (or a counter is made anew); that is detected here.
 
-require __DIR__ . '/config.php';   // INGEST_TOKEN, READ_TOKEN, DATA_DIR
+if (!file_exists(__DIR__ . '/config.php')) {  // uploaded, not set up yet
+  http_response_code(503);
+  header('Content-Type: application/json; charset=utf-8');
+  echo json_encode(['error' => 'This relay is not set up yet - open setup.php in a browser.']);
+  exit;
+}
+require __DIR__ . '/config.php';   // INGEST_TOKEN, READ_TOKEN, DATA_DIR (made by setup.php or deploy.py)
 
 const SCHEMA_VERSION = 2;           // 2: arx/atx - all traffic as the router's counting rules see it
 const KEEP_DAYS = 800;             // traffic rows older than this are pruned

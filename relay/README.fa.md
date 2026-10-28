@@ -1,69 +1,196 @@
-# NetMon relay (اختیاری)
+# روتر MikroTik: مصرف کل شبکه (اختیاری)
 
 [English](README.md) · **فارسی**
 
-NetMon به‌تنهایی فقط کامپیوتری را می‌بیند که رویش اجرا می‌شود. اگر اینترنت شما از یک
-**روتر MikroTik (RouterOS 7)** می‌آید، relay این امکان را می‌دهد که NetMon مصرف **کل
-شبکه** را نشان دهد: همه‌ی گوشی‌ها، تلویزیون‌ها و کامپیوترها، حتی ساعت‌هایی که کامپیوتر شما
-خاموش است.
+NetMon به‌تنهایی فقط کامپیوتری را می‌بیند که رویش اجرا می‌شود. با یک **روتر MikroTik
+(RouterOS 7)** می‌تواند مصرف اینترنت **کل شبکه** را هم نشان دهد: همه‌ی گوشی‌ها،
+تلویزیون‌ها و کامپیوترها، به تفکیک داخلی و بین‌المللی. سهمیه‌ی اینترنت هم می‌تواند از روی
+همین عددها حساب شود.
+
+فقط **شمارنده‌های بایت** اینترفیس اینترنت روتر خوانده می‌شود. هیچ آدرس، سایت یا دستگاهی
+خوانده نمی‌شود. گزینه‌ی **Settings → Integrations → MikroTik router** را روشن کنید تا تب
+**Router** ظاهر شود. بعد یکی از این سه روش را انتخاب کنید:
+
+| | چطور | پیش‌نیاز | وقتی این کامپیوتر خاموش است |
+|---|---|---|---|
+| **۱. مستقیم** | NetMon هر دقیقه روتر را می‌خواند | فقط RouterOS 7.1 یا جدیدتر | روتر به شمردن ادامه می‌دهد و NetMon بعداً آن را می‌گیرد (به‌صورت تخمینی). **اگر در این مدت روتر ری‌استارت شود، مصرف از آخرین خواندن تا ری‌استارت از دست می‌رود.** |
+| **۲. رله‌ی PHP** | روتر هر دقیقه به یک برنامه‌ی کوچک PHP روی یک هاست گزارش می‌دهد | هر هاست PHP با SQLite (هاست اشتراکی هم کافی است) | دقیقه‌به‌دقیقه ثبت می‌شود |
+| **۳. رله‌ی Cloudflare** | همان، روی Cloudflare Workers و D1 | یک حساب رایگان Cloudflare | دقیقه‌به‌دقیقه ثبت می‌شود |
+
+روش مستقیم ساده‌ترین است. رله هیچ‌چیز را از دست نمی‌دهد، حتی اگر وقتی کامپیوتر خاموش است
+روتر ری‌استارت شود.
+
+## سهم ترافیک داخلی (اختیاری، در هر سه روش)
+
+برای تفکیک داخلی و بین‌المللی، روتر به یک **address list** با محدوده‌های IP کشورتان نیاز
+دارد. اسکریپت‌های NetMon چهار قانون mangle از نوع passthrough اضافه می‌کنند که فقط
+می‌شمارند و چیزی را تغییر نمی‌دهند: ترافیک داخلی و کل ترافیک، در هر دو جهت. سهم داخلی از
+نسبت این دو به دست می‌آید و روی شمارنده‌های دقیق اینترفیس اعمال می‌شود. به همین دلیل
+queueای که بسته‌ها را دور می‌ریزد، یا IPsec (که با `ipsec-policy=…,none` فقط یک بار شمرده
+می‌شود)، نتیجه را خراب نمی‌کند.
+
+- **ایران:** [mo13ammad/Country-IP-List](https://github.com/mo13ammad/Country-IP-List)
+  محدوده‌های IP یک کشور را به‌صورت address list میکروتیک درمی‌آورد. لیست `IP-IR` خود
+  سازنده‌ی NetMon هم از همین‌جا ساخته شده. هر لیست دیگری با محدوده‌های IP کشورتان هم کار
+  می‌کند؛ فقط آن را به‌روز نگه دارید.
+- اگر **FastTrack** روشن باشد، اتصال‌های fast-track شده از mangle عبور نمی‌کنند. در این حالت
+  سهم داخلی کمتر از واقع نمایش داده می‌شود (ولی جمع کل درست می‌ماند). اسکریپت‌ها در این
+  مورد هشدار می‌دهند.
+
+---
+
+## ۱. مستقیم (بدون سرور)
+
+1. در تب Router، گزینه‌ی **Direct – no server** را انتخاب کنید.
+2. آدرس روتر (IP آن در شبکه‌ی داخلی، مثلاً `192.168.88.1`)، اینترفیس اینترنت (مثلاً
+   `pppoe-out1`) و در صورت تمایل نام address list داخلی را وارد کنید.
+3. روی **Make setup script** بزنید، اسکریپت را کپی کنید و در ترمینال روتر
+   (Winbox → New Terminal) پیست کنید. این اسکریپت:
+   - یک گروه کاربری `netmon-read` می‌سازد که فقط مجوزهای `read,web,rest-api` را دارد و
+     نمی‌تواند چیزی را تغییر دهد. بعد کاربر `netmon` را با یک رمز تصادفی در این گروه
+     می‌سازد که فقط از شبکه‌ی داخلی شما اجازه‌ی ورود دارد. NetMon این رمز را رمزنگاری‌شده و
+     مخصوص کاربر ویندوز شما نگه می‌دارد.
+   - اگر سرویس `www` روتر (http، پورت 80) خاموش باشد، آن را فقط برای شبکه‌ی داخلی روشن
+     می‌کند. اگر روشن باشد به آن دست نمی‌زند (در این حالت باید اجازه‌ی دسترسی از آدرس
+     کامپیوتر شما را داشته باشد).
+   - اگر address list داخلی را وارد کرده باشید، چهار قانون شمارش را اضافه می‌کند.
+4. روی **Test** بزنید. از این به بعد NetMon تا وقتی اجرا می‌شود هر دقیقه روتر را می‌خواند.
+
+**وقتی NetMon اجرا نمی‌شود** (کامپیوتر خاموش است یا NetMon بسته است)، روتر به شمردن ادامه
+می‌دهد. در خواندن بعدی، NetMon کل این مقدار را می‌گیرد و آن را به‌طور مساوی بین آن ساعت‌ها
+تقسیم می‌کند. این ساعت‌ها در نمودار کم‌رنگ و با برچسب «estimated» نمایش داده می‌شوند.
+**اگر در این مدت روتر ری‌استارت شود، شمارنده‌هایش از صفر شروع می‌شوند و مصرف بین آخرین
+خواندن NetMon و ری‌استارت از دست می‌رود.** NetMon ری‌استارت را تشخیص می‌دهد و می‌گوید کدام
+ساعت‌ها نامعلوم است. اگر این برایتان مهم است، از رله استفاده کنید.
+
+<details><summary>پاک کردن از روی روتر</summary>
 
 ```
-MikroTik ──(every minute: WAN byte counters)──▶ relay (PHP + SQLite) ◀──(when it runs)── NetMon
+/user remove [find name="netmon"]
+/user group remove [find name="netmon-read"]
+```
+و قانون‌های شمارش را فقط در صورتی که اسکریپت رله هم از آن‌ها استفاده نمی‌کند:
+```
+/ip firewall mangle remove [find comment~"^netmon:"]
+```
+</details>
+
+---
+
+## ۲. رله‌ی PHP (هاست خودتان)
+
+هر هاست با PHP 7.3 به بالا و SQLite کافی است. یک هاست اشتراکی کوچک هم کاملاً بس است،
+چون در هر دقیقه فقط یک درخواست کوچک دریافت می‌کند.
+
+1. **یک (زیر)دامنه با HTTPS** بسازید، مثلاً `netmon.example.com`. این کار از
+   cPanel → Domains انجام می‌شود. گواهی رایگان Let's Encrypt را هم برایش روشن کنید.
+2. فایل **`NetMon-relay-<version>.zip`** را از صفحه‌ی
+   [Releases](https://github.com/sadi754/netmon/releases) دانلود کنید و محتوایش را در پوشه‌ی
+   همان (زیر)دامنه آپلود کنید (cPanel → File Manager → Upload، بعد Extract). پوشه‌ی `data` و
+   فایل‌های `.htaccess` را حتماً نگه دارید.
+3. آدرس **`https://netmon.example.com/setup.php`** را در مرورگر باز کنید. این صفحه هاست را
+   بررسی می‌کند (نسخه‌ی PHP، SQLite، دسترسی پوشه‌ها و HTTPS)، دو توکن می‌سازد و فقط یک بار
+   نمایش می‌دهد:
+   - **read token**: برای NetMon.
+   - **router token**: برای اسکریپت روتر.
+4. در NetMon: تب Router → **Through a relay**. آدرس رله و read token را وارد کنید، بعد
+   **Save** و **Test** را بزنید.
+5. بخش **Router script** را باز کنید، اینترفیس اینترنت، در صورت تمایل address list داخلی، و
+   router token را وارد کنید. روی **Make script** بزنید و اسکریپت را در ترمینال روتر پیست
+   کنید. این اسکریپت یک scheduler به نام `netmon-feed` نصب می‌کند که هر دقیقه گزارش می‌دهد.
+6. فایل `setup.php` را پاک کنید (هر چند دیگر اجرا نمی‌شود). اگر توکن‌ها را گم کردید،
+   `config.php` را پاک کنید و دوباره `setup.php` را باز کنید. داده‌های ثبت‌شده می‌مانند.
+
+دیتابیس در `data/netmon.sqlite` است. فایل `.htaccess` هرگز آن را یا `config.php` را در
+دسترس قرار نمی‌دهد.
+
+<details><summary>از روی سورس با Python (برای برنامه‌نویس‌ها)</summary>
+
+به‌جای قدم‌های ۲ و ۳، اسکریپت `relay/deploy.py` رله را از طریق FTPS آپلود می‌کند و توکن‌ها
+را می‌سازد. مشخصات هاست را در فایل `~/.netmon-deploy.env` بنویسید (بیرون از پوشه‌ی پروژه):
+```
+FTP_HOST=your-host
+FTP_USER=netmon@example.com
+FTP_PASS=...
+SITE_URL=https://netmon.example.com
+```
+بعد:
+```
+python relay/deploy.py --init       # INGEST_TOKEN و READ_TOKEN را به فایل اضافه می‌کند
+python relay/deploy.py              # رله را آپلود می‌کند
+python relay/deploy.py --router-script --wan pppoe-out1 --list IP-IR
+python relay/deploy.py --status     # چه داده‌ای رسیده
+```
+</details>
+
+---
+
+## ۳. رله‌ی Cloudflare (رایگان، بدون هاست)
+
+همان رله، به‌صورت یک Cloudflare Worker با دیتابیس D1. پلن رایگان کاملاً کافی است.
+
+> **در ایران:** دامنه‌های `*.workers.dev` اغلب فیلتر هستند و بعضی آدرس‌های Cloudflare هم
+> اختلال دارند. برای همین ممکن است **روتر** به رله نرسد (کامپیوتر شما شاید برسد، اگر از
+> مسیر VPN برود). اگر روتر شما VPN دارد، ترافیک خود روتر به رله را از مسیر VPN بفرستید.
+> بخش [روتر پشت فیلترینگ](#روتر-پشت-فیلترینگ-ایران) را در پایین ببینید. در غیر این صورت از
+> روش مستقیم یا یک هاست PHP در ایران استفاده کنید.
+
+**در داشبورد Cloudflare** (بدون نیاز به هیچ ابزاری؛ ممکن است نام دکمه‌ها کمی فرق کند):
+
+1. به **Workers & Pages → Create → Create Worker** بروید، از قالب «Hello World» شروع کنید،
+   نامش را `netmon-relay` بگذارید و **Deploy** را بزنید.
+2. روی **Edit code** بزنید، کل محتوا را با محتوای فایل
+   [`relay/cloudflare/worker.js`](cloudflare/worker.js) عوض کنید و **Deploy** را بزنید.
+3. به **Storage & Databases → D1 → Create database** بروید و دیتابیسی به نام `netmon-relay`
+   بسازید.
+4. به Worker برگردید: **Settings → Bindings → Add → D1 database**. نام متغیر را **`DB`**
+   بگذارید، دیتابیس `netmon-relay` را انتخاب کنید و **Deploy** را بزنید.
+5. آدرس **`https://netmon-relay.<your-subdomain>.workers.dev/setup`** را باز کنید و روی
+   **Set up the relay** بزنید. read token و router token یک بار نمایش داده می‌شوند.
+6. ادامه‌ی کار مثل قدم‌های ۴ و ۵ رله‌ی PHP در بالاست (اول NetMon، بعد اسکریپت روتر).
+
+اگر توکن‌ها را گم کردید، در **Console** دیتابیس D1 این دستور را اجرا کنید و دوباره `/setup` را
+باز کنید:
+```
+DELETE FROM meta WHERE key LIKE '%_token'
 ```
 
-- روتر فقط **شمارنده‌های بایت** اینترفیس اینترنت را می‌فرستد (و در صورت تمایل، سهم داخلی
-  آن‌ها را). هیچ آدرس، سایت یا دستگاهی فرستاده نمی‌شود.
-- روتر شمارنده‌های **تجمعی** را می‌فرستد، پس اگر یک دقیقه از دست برود چیزی گم نمی‌شود؛ ری‌استارت
-  روتر یا قطع و وصل PPPoE را relay تشخیص می‌دهد.
-- هر هاست PHP 7.3 به بالا با SQLite کافی است؛ یک هاست اشتراکی کوچک هم کاملاً کافی است
-  (دقیقه‌ای یک درخواست کوچک).
+**با Wrangler:** فایل [`relay/cloudflare/wrangler.toml`](cloudflare/wrangler.toml) را ببینید.
 
-## راه‌اندازی
+### روتر پشت فیلترینگ (ایران)
 
-1. **هاست.** یک (زیر)دامنه با HTTPS بسازید، مثلاً `netmon.example.com`، و یک حساب FTP که
-   فقط به پوشه‌ی آن دسترسی دارد (cPanel → FTP Accounts → Directory).
-2. **فایل مشخصات**، بیرون از پوشه‌ی پروژه: `~/.netmon-deploy.env`
-   ```
-   FTP_HOST=your-host
-   FTP_USER=netmon@example.com
-   FTP_PASS=...
-   SITE_URL=https://netmon.example.com
-   ```
-3. **ساخت توکن‌ها و آپلود:**
-   ```
-   python relay/deploy.py --init       # INGEST_TOKEN و READ_TOKEN را به فایل اضافه می‌کند
-   python relay/deploy.py              # relay را آپلود می‌کند
-   ```
-4. **اسکریپت روتر:**
-   ```
-   python relay/deploy.py --router-script --wan pppoe-out1 --list IP-IR
-   ```
-   فایل `~/netmon-router-feed.rsc` را می‌سازد (تب Router در NetMon هم می‌تواند آن را بسازد).
-   آن را روی روتر import کنید (`/import file-name=netmon-router-feed.rsc`) یا در ترمینال روتر
-   paste کنید. `--list` اختیاری است: نام یک address list که محدوده‌های IP کشورتان در آن است.
-   در این حالت چهار قانون mangle از نوع passthrough ترافیک داخلی و کل ترافیک را می‌شمارند؛
-   سهم داخلی از نسبت این دو به دست می‌آید و روی شمارنده‌های دقیق اینترفیس اعمال می‌شود، پس
-   queueای که بسته‌ها را دور می‌ریزد یا IPsec (که با `ipsec-policy=...,none` فقط یک بار
-   شمرده می‌شود) نتیجه را خراب نمی‌کند. اگر FastTrack روشن باشد، ترافیک fast-track شده از
-   mangle عبور نمی‌کند.
+اگر روتر فقط از مسیر VPN به رله می‌رسد، ترافیکی را که **خود روتر** به رله می‌فرستد با
+routing table مربوط به VPN علامت بزنید. ترافیک کامپیوترهای شبکه تغییری نمی‌کند. به‌جای `VPN`
+نام routing table خودتان و به‌جای آدرس نمونه آدرس رله‌ی خودتان را بگذارید:
 
-   **لیست IP کشور را از کجا بیاوریم:** برای ایران می‌توانید address list را با
-   [mo13ammad/Country-IP-List](https://github.com/mo13ammad/Country-IP-List) بسازید که
-   محدوده‌های IP یک کشور را به‌صورت address list میکروتیک درمی‌آورد (لیست `IP-IR` خود سازنده‌ی
-   NetMon هم از همین‌جا ساخته شده). هر address list دیگری با محدوده‌های IP کشورتان هم کار
-   می‌کند؛ فقط آن را به‌روز نگه دارید.
-5. **بررسی:** دستور `python relay/deploy.py --status` نشان می‌دهد چه داده‌ای رسیده است.
-6. **NetMon:** گزینه‌ی Settings → Integrations → MikroTik router را روشن کنید، بعد در تب
-   Router آدرس relay و `READ_TOKEN` را وارد کنید.
+```
+/ip firewall address-list add list=netmon-relay address=netmon-relay.example.workers.dev comment="NetMon: relay via VPN"
+/ip firewall mangle add chain=output dst-address-list=netmon-relay action=mark-routing new-routing-mark=VPN passthrough=no comment="NetMon: relay via VPN"
+```
 
-## API
+RouterOS خودش IPهای address list را از روی نام دامنه به‌روز نگه می‌دارد. اینترفیس VPN باید
+یک قانون masquerade (src-nat) داشته باشد، مثل همانی که برای کامپیوترها دارید. برای بررسی:
+```
+/tool fetch url="https://…/api/health" output=user
+```
+برای برگرداندن:
+```
+/ip firewall mangle remove [find comment="NetMon: relay via VPN"]
+/ip firewall address-list remove [find list="netmon-relay"]
+```
+
+---
+
+## API رله
+
+هر دو رله یکسان جواب می‌دهند:
 
 | | |
 |---|---|
-| `POST /api/ingest` | روتر ← relay. `Authorization: Bearer INGEST_TOKEN`. بدنه‌ی JSON: `router`، `iface`، `uptime` (`1w2d03:04:05`)، شمارنده‌های تجمعی `rx`، `tx` (اینترفیس) و `drx`، `dtx`، `arx`، `atx` (داخلی / کل، از قانون‌های شمارش)، به بایت |
-| `GET /api/traffic?after=ID&limit=N` | NetMon ردیف‌های جدید را می‌خواند. `Authorization: Bearer READ_TOKEN`. هر ردیف ترافیک بین دو خواندن است: `id, router, iface, ts, span, rx, tx, drx, dtx, arx, atx, reset` |
-| `GET /api/status` | آخرین خواندن هر اینترفیس روتر، تعداد ردیف‌ها، حجم دیتابیس |
-| `GET /api/health` | بدون توکن: relay بالا است؟ |
+| `POST /api/ingest` | روتر ← رله. `Authorization: Bearer <router token>`. بدنه‌ی JSON: `router`، `iface`، `uptime` (`1w2d03:04:05`)، شمارنده‌های تجمعی `rx`، `tx` (اینترفیس) و `drx`، `dtx`، `arx`، `atx` (داخلی / کل، از قانون‌های شمارش)، به بایت |
+| `GET /api/traffic?after=ID&limit=N` | NetMon ردیف‌های جدید را می‌خواند. `Authorization: Bearer <read token>`. هر ردیف ترافیک بین دو خواندن است: `id, router, iface, ts, span, rx, tx, drx, dtx, arx, atx, reset` |
+| `GET /api/status` | آخرین خواندن هر اینترفیس روتر و شناسه‌ی آخرین ردیف |
+| `GET /api/health` | بدون توکن: رله بالا است؟ |
 
-دیتابیس در مسیر `public/data/netmon.sqlite` روی هاست است؛ فایل `.htaccess` هرگز آن را یا
-`config.php` را (که `deploy.py` از توکن‌های شما می‌سازد) در دسترس قرار نمی‌دهد.
+روتر شمارنده‌های **تجمعی** را می‌فرستد، پس اگر یک دقیقه از دست برود چیزی گم نمی‌شود:
+گزارش بعدی آن را پوشش می‌دهد. ری‌استارت روتر هم تشخیص داده می‌شود (`reset`).

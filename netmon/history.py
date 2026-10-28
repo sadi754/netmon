@@ -19,6 +19,7 @@ from pathlib import Path
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 
+from . import pinghistory
 from .adapters import Adapter
 from .paths import DATA_DIR
 from .periods import Period, hour_start
@@ -89,10 +90,39 @@ CREATE TABLE IF NOT EXISTS router_hour (
     dtx    INTEGER NOT NULL DEFAULT 0,
     arx    INTEGER NOT NULL DEFAULT 0,
     atx    INTEGER NOT NULL DEFAULT 0,
+    estimated INTEGER NOT NULL DEFAULT 0,  -- 1: nobody read the router then; its traffic was shared out evenly
     PRIMARY KEY (ts, router, iface)
 ) WITHOUT ROWID;
+-- Pings per minute (ts = start of the minute) of each kind: "internet" (the target in Settings)
+-- and "gateway" (the local router). Round trips in whole ms; rtt_avg and jitter in tenths of a ms.
+-- raw: each second's ping (pinghistory.py), kept for a week, then NULL.
+CREATE TABLE IF NOT EXISTS ping_minute (
+    kind    TEXT NOT NULL,
+    ts      INTEGER NOT NULL,
+    host    TEXT NOT NULL,
+    sent    INTEGER NOT NULL,
+    lost    INTEGER NOT NULL,
+    rtt_min INTEGER,
+    rtt_avg INTEGER,
+    rtt_max INTEGER,
+    rtt_p95 INTEGER,
+    jitter  INTEGER,
+    raw     BLOB,
+    PRIMARY KEY (kind, ts)
+) WITHOUT ROWID;
+-- Outages: pings lost in a row. ended = when the first answer came back (NULL while it lasts).
+CREATE TABLE IF NOT EXISTS ping_outage (
+    kind    TEXT NOT NULL,
+    started INTEGER NOT NULL,
+    ended   INTEGER,
+    host    TEXT NOT NULL,
+    lost    INTEGER NOT NULL,
+    PRIMARY KEY (kind, started)
+) WITHOUT ROWID;
 """
+_PING_STATS = ("sent", "lost", "rtt_min", "rtt_avg", "rtt_max", "rtt_p95", "jitter")
 _ROUTER_VALUES = ("rx", "tx", "drx", "dtx", "arx", "atx")
+ESTIMATED_AFTER = 300  # seconds: a router row covering a longer gap than this is shared out as an estimate
 _CAPTURED = ("lan_rx", "lan_tx", "drx", "dtx", "irx", "itx")      # added to usage_hour by the packet capture
 USAGE_VALUES = ("rx", "tx", "drx", "dtx", "irx", "itx", "lan_rx", "lan_tx")  # what totals() and series() give
 PROGRAM_VALUES = ("rx", "tx", "lan_rx", "lan_tx", "drx", "dtx")  # per program and hour
@@ -127,6 +157,10 @@ class History:
         for column in _CAPTURED:  # databases from before packet capture
             if column not in columns:
                 self._db.execute(f"ALTER TABLE usage_hour ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0")
+        if "estimated" not in {row[1] for row in self._db.execute("PRAGMA table_info(router_hour)")}:
+            self._db.execute("ALTER TABLE router_hour ADD COLUMN estimated INTEGER NOT NULL DEFAULT 0")
+        # An outage still open from last time: NetMon stopped during it (or crashed) - it ends where it was last saved.
+        self._db.execute("UPDATE ping_outage SET ended = started + lost WHERE ended IS NULL")
         self._lock = threading.Lock()
         self._program_ids: dict[str, int] = {}
         self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="history")
@@ -319,13 +353,15 @@ class History:
 
     # ---- the router's traffic (whole network)
 
-    def add_router_rows(self, rows: list[dict], last_id: int) -> None:
-        """Store relay rows (traffic between two router readings) and remember how far we got.
+    def add_router_rows(self, rows: list[dict], last_id: int | None = None) -> None:
+        """Store router rows (traffic between two router readings) and, for the relay, how far we got.
 
         A row covers [ts - span, ts]; its bytes are shared out over the local hours
-        in that window, so a gap of a few hours doesn't land in a single hour.
+        in that window, so a gap of a few hours doesn't land in a single hour. Hours
+        filled from a long gap are marked as estimated.
         """
         buckets: dict[tuple[int, str, str], list[float]] = {}
+        estimated: set[tuple[int, str, str]] = set()
         for row in rows:
             row = dict(row)
             # Rows from the first router script have no "all traffic" counters; use the
@@ -335,21 +371,26 @@ class History:
             if not row.get("atx") and row.get("dtx"):
                 row["atx"] = row["tx"]
             for hour, share in _hour_shares(row["ts"] - row["span"], row["ts"]):
-                totals = buckets.setdefault((hour, row["router"], row["iface"]), [0.0] * len(_ROUTER_VALUES))
+                key3 = (hour, row["router"], row["iface"])
+                totals = buckets.setdefault(key3, [0.0] * len(_ROUTER_VALUES))
                 for i, key in enumerate(_ROUTER_VALUES):
                     totals[i] += row.get(key, 0) * share
+                if row["span"] > ESTIMATED_AFTER:
+                    estimated.add(key3)
         with self._lock:
             self._db.execute("BEGIN")
             try:
                 for (hour, router, iface), values in buckets.items():
                     self._db.execute(
-                        "INSERT INTO router_hour (ts, router, iface, rx, tx, drx, dtx, arx, atx) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (ts, router, iface) DO UPDATE SET "
+                        "INSERT INTO router_hour (ts, router, iface, rx, tx, drx, dtx, arx, atx, estimated) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (ts, router, iface) DO UPDATE SET "
                         "rx = rx + excluded.rx, tx = tx + excluded.tx, drx = drx + excluded.drx, "
-                        "dtx = dtx + excluded.dtx, arx = arx + excluded.arx, atx = atx + excluded.atx",
-                        (hour, router, iface, *(round(v) for v in values)))
-                self._db.execute("INSERT INTO meta (key, value) VALUES ('router_last_id', ?) "
-                                 "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (json.dumps(last_id),))
+                        "dtx = dtx + excluded.dtx, arx = arx + excluded.arx, atx = atx + excluded.atx, "
+                        "estimated = MAX(estimated, excluded.estimated)",
+                        (hour, router, iface, *(round(v) for v in values), int((hour, router, iface) in estimated)))
+                if last_id is not None:
+                    self._db.execute("INSERT INTO meta (key, value) VALUES ('router_last_id', ?) "
+                                     "ON CONFLICT (key) DO UPDATE SET value = excluded.value", (json.dumps(last_id),))
                 self._db.execute("COMMIT")
             except sqlite3.Error:
                 self._db.execute("ROLLBACK")
@@ -362,6 +403,13 @@ class History:
             row = self._db.execute(f"SELECT {sums} FROM router_hour WHERE ts >= ? AND ts < ?",
                                    (int(start), int(end))).fetchone()
         return tuple(row)
+
+    def router_estimated(self, start: float, end: float) -> list[int]:
+        """The hours (start times) between two times whose router traffic is an estimate."""
+        with self._lock:
+            rows = self._db.execute("SELECT DISTINCT ts FROM router_hour WHERE estimated = 1 AND ts >= ? AND ts < ? "
+                                    "ORDER BY ts", (int(start), int(end))).fetchall()
+        return [row[0] for row in rows]
 
     def router_series(self, periods: list[Period]) -> list[tuple[int, ...]]:
         if not periods:
@@ -377,6 +425,76 @@ class History:
             for i, value in enumerate(values):
                 bucket[i] += value
         return [tuple(v) for v in result]
+
+    # ---- ping history (pinghistory.py)
+
+    def add_ping_minute(self, kind: str, minute: int, host: str, raw: bytes) -> None:
+        self._worker.submit(self._save_ping_minute, kind, minute, host, raw)
+
+    def _save_ping_minute(self, kind: str, minute: int, host: str, raw: bytes) -> None:
+        try:
+            with self._lock:
+                row = self._db.execute("SELECT raw FROM ping_minute WHERE kind = ? AND ts = ?", (kind, minute)).fetchone()
+                if row and row[0]:  # NetMon restarted (or the target changed) within this minute
+                    raw = pinghistory.merge_raw(row[0], raw)
+                stats = pinghistory.minute_stats(raw)
+                if stats is None:
+                    return
+                self._db.execute(
+                    f"INSERT INTO ping_minute (kind, ts, host, {', '.join(_PING_STATS)}, raw) "
+                    f"VALUES (?, ?, ?, {', '.join('?' * len(_PING_STATS))}, ?) ON CONFLICT (kind, ts) DO UPDATE SET "
+                    f"host = excluded.host, {', '.join(f'{c} = excluded.{c}' for c in _PING_STATS)}, raw = excluded.raw",
+                    (kind, minute, host, *(stats[c] for c in _PING_STATS), raw))
+        except sqlite3.Error:
+            log.exception("Saving the ping history failed")
+
+    def save_outage(self, kind: str, started: int, host: str, lost: int, ended: int | None) -> None:
+        def save():
+            try:
+                with self._lock:
+                    self._db.execute(
+                        "INSERT INTO ping_outage (kind, started, ended, host, lost) VALUES (?, ?, ?, ?, ?) "
+                        "ON CONFLICT (kind, started) DO UPDATE SET ended = excluded.ended, lost = excluded.lost",
+                        (kind, started, ended, host, lost))
+            except sqlite3.Error:
+                log.exception("Saving an outage failed")
+        self._worker.submit(save)
+
+    def prune_ping(self, before: float) -> None:
+        """Drop the single pings older than this; the minutes' statistics stay."""
+        with self._lock:
+            self._db.execute("UPDATE ping_minute SET raw = NULL WHERE ts < ? AND raw IS NOT NULL", (int(before),))
+
+    def ping_minutes(self, start: float, end: float, with_raw: bool) -> list[dict]:
+        columns = ("kind", "ts", "host", *_PING_STATS) + (("raw",) if with_raw else ())
+        with self._lock:
+            rows = self._db.execute(f"SELECT {', '.join(columns)} FROM ping_minute WHERE ts >= ? AND ts < ? "
+                                    "ORDER BY ts", (int(start), int(end))).fetchall()
+        return [dict(zip(columns, row)) for row in rows]
+
+    def ping_outages(self, start: float, end: float) -> list[dict]:
+        """Outages that touch [start, end): kind, start, end (None while it lasts), host, lost."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT kind, started, ended, host, lost FROM ping_outage WHERE started < ? "
+                "AND (ended IS NULL OR ended > ?) ORDER BY started", (int(end), int(start))).fetchall()
+        return [dict(zip(("kind", "start", "end", "host", "lost"), row)) for row in rows]
+
+    def ping_first(self) -> float | None:
+        with self._lock:
+            return self._db.execute("SELECT MIN(ts) FROM ping_minute").fetchone()[0]
+
+    def clear_ping(self) -> None:
+        """Forget the ping history (minutes and outages)."""
+        def clear():
+            with self._lock:
+                self._db.execute("BEGIN")
+                self._db.execute("DELETE FROM ping_minute")
+                self._db.execute("DELETE FROM ping_outage")
+                self._db.execute("COMMIT")
+                self._db.execute("VACUUM")
+            log.info("Ping history deleted")
+        self._worker.submit(clear).result()
 
     # ---- the Settings page: export, size, delete
 

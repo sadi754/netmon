@@ -21,6 +21,8 @@ GeoIP database for the Connections tab (one click in Settings).
   desktop or **sit on the taskbar**. They hide during full-screen games and videos.
 - **Usage history** – hours, days, weeks and months in the **Jalali (Shamsi)
   calendar**, as a chart or a table.
+- **Ping history** – delay, loss and jitter to the internet and your router, always
+  recorded in the background, with outages listed over the last hour to 30 days.
 - **Data quota** – monthly, daily or every N days (prepaid packages), with
   warnings at 80% and 100%. Domestic traffic can count at a reduced rate.
 - **Per-program traffic** – which program uses how much, right now and over time
@@ -39,6 +41,7 @@ GeoIP database for the Connections tab (one click in Settings).
 |---|---|
 | ![Usage](docs/images/usage.png) | ![Connections](docs/images/connections.png) |
 | ![Live](docs/images/live.png) | ![Map](docs/images/map.png) |
+| ![Ping history](docs/images/ping.png) | |
 
 ![Widgets: floating or on the taskbar](docs/images/widgets.png)
 
@@ -123,6 +126,17 @@ aren't included (see *Whole network* below). 1 GB = 1024 MB; some ISPs count 100
 With per-program traffic on, traffic that stays in your local network isn't
 counted, and domestic traffic can count at a reduced rate (e.g. 50%).
 
+### Ping history
+
+NetMon pings your internet target (default `8.8.8.8`) and your router once a second
+in the background – also while the widget is hidden – and keeps single pings for 7
+days, per-minute statistics and outages for good (about 10 MB of traffic a day). The
+**Ping** tab shows delay, loss and jitter as a chart over the last hour, 24 hours, 7
+or 30 days (a min – p95 band), and lists **outages** – 3 or more pings lost in a row,
+lasting until the first reply comes back, with whether the router answered too (so
+you can tell your own network apart from the internet). Turn recording off, change
+the target or the router to ping, or delete the history, in **Settings → Ping**.
+
 ### Per-program traffic (Npcap)
 
 With Npcap installed, NetMon captures the packets on the physical adapters and
@@ -175,11 +189,19 @@ to zoom, drag to move. The map is drawn only while its tab is visible.
 ### Whole network: MikroTik router (optional)
 
 With a MikroTik router (RouterOS 7), NetMon can show the internet usage of the
-**whole network** – every device, also while this PC is off – split into domestic
-and international traffic. The router reports its WAN byte counters every minute
-to a small **NetMon relay** (PHP + SQLite on any web host); NetMon reads them back.
-Turn it on in **Settings → Integrations → MikroTik router**. Setup:
-[relay/README.md](relay/README.md).
+**whole network** – every device – split into domestic and international traffic, and
+count the data quota from it. Only the router's WAN byte counters are read. Turn it on
+in **Settings → Integrations → MikroTik router**, then choose how NetMon gets them:
+
+- **Direct** – NetMon reads the router itself every minute (no server). Simplest; but if
+  the router restarts while NetMon isn't running, the traffic since its last reading is
+  lost. Hours NetMon missed are filled in as estimates (pale bars).
+- **PHP relay** – the router reports every minute to a small program on any PHP host
+  (upload a zip, open `setup.php`). Nothing is missed while your PC is off.
+- **Cloudflare relay** – the same on Cloudflare Workers + D1, free (in Iran the router
+  may need to reach it through a VPN).
+
+Step by step: [relay/README.md](relay/README.md).
 
 ### Adapters and VPNs
 
@@ -208,7 +230,8 @@ for features you use:
 - **GeoIP database**: downloaded from `download.db-ip.com` when you click Download
   or Update. Addresses are never sent anywhere to be located.
 - **Ping widget**: pings the target you set, while shown.
-- **MikroTik router** (off by default): reads your router's counters from your own relay.
+- **MikroTik router** (off by default): reads your router's byte counters – directly in your local
+  network, or from your own relay.
 
 ## Troubleshooting
 
@@ -221,6 +244,8 @@ for features you use:
   `window.log` in the data folder.
 - **The tray icon is gone** – Windows 11 hides it behind **^**; drag it to the taskbar.
 - **"Move to taskbar" is greyed out** – the taskbar is set to auto-hide.
+- **Router tab, direct: "not allowed" or "refused"** – run the setup script again (it sets the
+  user's permissions and password); the router's `www` service must allow your PC's address.
 - **Logs** – `netmon.log` and `window.log` in `%LOCALAPPDATA%\NetMon`
   (Settings → About → Open log file).
 
@@ -262,8 +287,9 @@ netmon/                the app (Python)
   history.py           usage history in SQLite
   usage.py, periods.py summaries, charts, quota; Jalali periods
   jalali.py            Jalali (Shamsi) calendar
-  router.py            the whole network's traffic from a NetMon relay
-  routerscript.py      the MikroTik script (also used by relay/deploy.py)
+  router.py            the whole network's traffic: from a NetMon relay, or directly (below)
+  routerdirect.py      reads the router itself over its REST API; gaps as estimates
+  routerscript.py      the MikroTik scripts: relay feed and direct-reading setup
   connections.py       TCP/UDP sockets and their owners (GetExtendedTcpTable)
   apps.py              program names, icons; services inside svchost.exe
   connwatch.py         the Connections tab's data, every 2 s while shown
@@ -282,13 +308,15 @@ netmon/                the app (Python)
   widget.py            floating widgets: native layered windows drawn with Pillow; taskbar docking
   minigraph.py         mini graph
   ping.py, pingwidget.py  ping (Windows ICMP API) and its widget
+  pinghistory.py        the Ping tab's recorded history and outages
   window.py            the desktop window (Edge WebView2, separate process)
   icons.py             tray graph and app icon, drawn in code
   settings.py          settings.json
   console.py           terminal view
 web/                   the window's UI (HTML/CSS/JS)
   vendor/              uPlot, globe.gl (with three.js), country flags, Natural Earth borders
-relay/                 optional: the NetMon relay (PHP) and the router script template
+relay/                 optional: the NetMon relay - PHP (public/, with setup.php) and Cloudflare
+                       (cloudflare/worker.js) - and the router script templates
 ```
 </details>
 

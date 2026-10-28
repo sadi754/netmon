@@ -8,9 +8,11 @@ const MAX_POINTS = 3600; // one hour of one-second samples
 
 const state = {
   ws: null,
-  view: "live",    // page shown: "live", "usage", "router", "connections", "map" or "settings"
+  view: "live",    // page shown: "live", "usage", "ping", "router", "connections", "map" or "settings"
   settings: { adapter: null, units: "bits" },
-  ping: null,      // latest ping statistics
+  ping: null,      // latest ping statistics (internet target)
+  pingGateway: null, // ... and of the gateway
+  pingRange: "1h", // Ping page: "1h", "24h", "7d" or "30d"
   usage: null,     // today / week / month totals and the quota (refreshed every minute)
   usageRange: "days",
   router: null,    // the Router tab: connection status and whole-network totals
@@ -440,8 +442,9 @@ function stackedBars(chartId, tableId, emptyText) {
         if (a && ha < 1) ha = 1; // tiny but not zero: still visible
         if (c && hc < 1) hc = 1;
         const gap = ha > 4 && hc > 0 ? 2 : 0; // a sliver of background between the two parts
-        if (ha) svg += `<path class="bar ${lo.cls}" d="${barPath(x, base - ha + gap, barW, ha - gap, hc ? 0 : 4)}"/>`;
-        if (hc) svg += `<path class="bar ${hi.cls}" d="${barPath(x, base - ha - hc, barW, hc, 4)}"/>`;
+        const est = b.estimated ? " est" : ""; // pale: shared out over a gap - an estimate
+        if (ha) svg += `<path class="bar ${lo.cls}${est}" d="${barPath(x, base - ha + gap, barW, ha - gap, hc ? 0 : 4)}"/>`;
+        if (hc) svg += `<path class="bar ${hi.cls}${est}" d="${barPath(x, base - ha - hc, barW, hc, 4)}"/>`;
         if ((list.length - 1 - i) % every === 0) {
           svg += `<text class="axis" x="${x + barW / 2}" y="${H - 9}" text-anchor="middle">${esc(b.short)}</text>`;
         }
@@ -455,7 +458,7 @@ function stackedBars(chartId, tableId, emptyText) {
     table() {
       const [lo, hi] = this.series;
       const rows = [...this.data.buckets].reverse().map((b) => `<tr>
-          <td>${esc(b.label)}${b.current ? ' <span class="muted">(so far)</span>' : ""}</td>
+          <td>${esc(b.label)}${b.current ? ' <span class="muted">(so far)</span>' : ""}${b.estimated ? ' <span class="muted">(estimated)</span>' : ""}</td>
           <td class="num">${size(lo.value(b))}</td><td class="num">${size(hi.value(b))}</td>
           <td class="num">${size(lo.value(b) + hi.value(b))}</td>
         </tr>`).join("");
@@ -471,7 +474,7 @@ function stackedBars(chartId, tableId, emptyText) {
     if (!hit) { tip.hidden = true; return; }
     const b = bars.data.buckets[Number(hit.dataset.i)];
     const row = (cls, label, v) => `<div class="row">${cls ? `<span class="swatch ${cls}"></span>` : ""}${label}<b>${size(v)}</b></div>`;
-    tip.innerHTML = `<div class="time">${esc(b.label)}${b.current ? " (so far)" : ""}</div>`
+    tip.innerHTML = `<div class="time">${esc(b.label)}${b.current ? " (so far)" : ""}${b.estimated ? " · estimated" : ""}</div>`
       + bars.series.map((s) => row(s.cls, s.label, s.value(b))).join("")
       + row("", "Total", bars.series[0].value(b) + bars.series[1].value(b));
     tip.hidden = false;
@@ -611,15 +614,21 @@ function routerCard(title, p, measured) {
 function renderRouterStatus() {
   const status = state.router?.status || { state: "off" };
   const r = status.routers?.[0];
+  const direct = status.mode === "direct";
   const line = {
     off: ["", "The MikroTik integration is off."],
-    setup: ["", "Not connected yet – enter your relay's address and read token below."],
+    setup: ["", direct ? "Not connected yet – make the setup script below, paste it into the router, then press Test."
+      : "Not connected yet – enter your relay's address and read token below."],
     error: ["bad", `Can't get the router's data: ${esc(status.message)}`],
     waiting: ["warn", "Connected to the relay – waiting for the router's first report (install the router script below)."],
     late: ["warn", r ? `Router <b>${esc(r.router)}</b> hasn't reported for ${ago(status.lag)} – is it online? Its scheduler is “netmon-feed”.` : ""],
-    ok: ["ok", r ? `Router <b>${esc(r.router)}</b> · ${esc(r.iface)} · last report ${ago(status.lag)} ago · router up ${duration(r.uptime)}` : ""],
+    ok: ["ok", r ? (direct ? `Router <b>${esc(r.router)}</b> · ${esc(r.iface)} · read directly every minute · router up ${duration(r.uptime)}`
+      : `Router <b>${esc(r.router)}</b> · ${esc(r.iface)} · last report ${ago(status.lag)} ago · router up ${duration(r.uptime)}`) : ""],
   }[status.state] || ["", ""];
-  $("router-status").innerHTML = `<span class="dot ${line[0]}"></span><span>${line[1]}</span>`;
+  // Direct reading: a router restart while NetMon wasn't reading lost some traffic.
+  const gaps = (status.gaps || []).slice(-3).map((g) => `<div class="gap">The router restarted on ${esc(dateTime(g.to))}
+    while NetMon wasn't reading it – its traffic between ${esc(dateTime(g.from))} and the restart is unknown.</div>`).join("");
+  $("router-status").innerHTML = `<span class="dot ${line[0]}"></span><span>${line[1]}${gaps}</span>`;
   const hasData = ["ok", "late"].includes(status.state);
   $("router-cards").hidden = !hasData;
   $("router-history").hidden = !hasData;
@@ -637,6 +646,9 @@ function renderRouter() {
       + routerCard("This month", summary.month, measured) + (withQuota ? quotaCard(q) : "");
   }
   routerBars.render();
+  const estimated = (routerBars.data?.buckets || []).some((b) => b.estimated);
+  $("router-hint").textContent = "Everything that went through the router's internet connection – all devices – including hours when this PC was off."
+    + (estimated ? " Pale bars are estimates: nothing read the router for a while, so that traffic is shared out evenly over those hours." : "");
 }
 
 function renderRouterLegend() {
@@ -645,6 +657,10 @@ function renderRouterLegend() {
 
 function requestRouter() {
   if (state.settings.router_enabled) send({ type: "router_usage", range: state.routerRange });
+}
+
+function dateTime(seconds) {
+  return new Date(seconds * 1000).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
 function routerNote(id, text, kind = "") {
@@ -665,10 +681,46 @@ $("router-form").addEventListener("submit", (e) => {
   e.preventDefault();
   const url = $("router-url").value.trim(), token = $("router-token").value.trim();
   if (!RELAY_URL.test(url)) return routerNote("router-note", "The address should look like https://netmon.example.com", "error");
-  if (!RELAY_TOKEN.test(token)) return routerNote("router-note", "Paste the relay's READ token (made by relay/deploy.py --init).", "error");
+  if (!RELAY_TOKEN.test(token)) return routerNote("router-note", "Paste the relay's read token (shown by its setup page, setup.php).", "error");
   send({ type: "settings", router_url: url, router_token: token });
   routerNote("router-note", "Saved – connecting…");
   document.activeElement.blur();
+});
+
+onSegment("router-way", (value) => {
+  markSegment("router-way", value);
+  showRouterWay(value);
+  send({ type: "settings", router_mode: value });
+});
+
+function showRouterWay(way) {
+  $("router-direct").hidden = way !== "direct";
+  $("router-relay").hidden = way !== "relay";
+}
+
+$("direct-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  routerNote("direct-note", "");
+  send({ type: "router_direct_script", host: $("direct-host").value.trim(), wan: $("direct-wan").value.trim(),
+         list: $("direct-list").value.trim() });
+});
+
+$("direct-test").addEventListener("click", () => {
+  const host = $("direct-host").value.trim(), wan = $("direct-wan").value.trim();
+  routerNote("direct-note", "Testing…");
+  state.directTest = { host, wan };
+  send({ type: "router_test", mode: "direct", host, wan });
+});
+
+$("direct-copy").addEventListener("click", async () => {
+  const text = $("direct-output").value;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    $("direct-output").select();
+    document.execCommand("copy");
+  }
+  routerNote("direct-note", "Copied – paste it into the router's terminal, then press Test.", "ok");
 });
 
 $("router-test").addEventListener("click", () => {
@@ -697,9 +749,15 @@ $("script-copy").addEventListener("click", async () => {
 function fillRouterForm(s) {
   $("router-tab").hidden = !s.router_enabled;
   if (!s.router_enabled && state.view === "router") location.hash = "settings";
+  markSegment("router-way", s.router_mode);
+  showRouterWay(s.router_mode);
   if (!$("router-form").contains(document.activeElement)) {
     $("router-url").value = s.router_url || "";
     $("router-token").value = s.router_token || "";
+  }
+  if (!$("direct-form").contains(document.activeElement)) {
+    if (s.router_host) $("direct-host").value = s.router_host;
+    if (s.router_wan) $("direct-wan").value = s.router_wan;
   }
 }
 
@@ -2117,6 +2175,320 @@ $("quota-form").addEventListener("submit", (e) => {
   document.activeElement.blur();
 });
 
+// ---------- ping page ----------
+
+const PING_COLORS = { internet: "#3987e5", gateway: "#199e70", loss: "#f85149" }; // = --inet, --gw, --bad
+const PING_KINDS = [["internet", "Internet", "inet"], ["gateway", "Gateway", "gw"]];
+const PING_RANGES = { "1h": "the last hour", "24h": "the last 24 hours", "7d": "the last 7 days", "30d": "the last 30 days" };
+const PING_POINTS = { 1: "each ping", 60: "per minute", 600: "per 10 minutes", 3600: "per hour" };
+
+const pingHist = {
+  data: null,      // the latest report: {range, start, end, step, series, stats, outages, days...}
+  chart: null,
+  drawTimer: 0,
+};
+
+// Round trips: "<1" under a millisecond (the gateway), one decimal below 10, whole numbers above.
+const msText = (v) => (v == null ? "–" : v < 1 ? "&lt;1" : v < 10 ? v.toFixed(1).replace(/\.0$/, "") : String(Math.round(v)));
+const msUnit = (v) => (v == null ? "–" : `${msText(v)}<span class="unit">ms</span>`);
+const lossText = (pct) => (pct == null ? "–" : pct === 0 ? "0" : pct < 0.1 ? "&lt;0.1" : pct < 10 ? pct.toFixed(1) : String(Math.round(pct)));
+
+function pingDuration(sec) {
+  sec = Math.max(0, Math.round(sec));
+  const d = Math.floor(sec / 86400), h = Math.floor(sec / 3600) % 24, m = Math.floor(sec / 60) % 60, s = sec % 60;
+  if (d) return `${d} d ${h} h`;
+  if (h) return `${h} h ${String(m).padStart(2, "0")} m`;
+  if (m) return `${m} m ${String(s).padStart(2, "0")} s`;
+  return `${s} s`;
+}
+
+function pingQuality(kind, v) {
+  if (v == null) return "bad";
+  const [good, fair] = kind === "gateway" ? [5, 20] : [60, 120];
+  return v < good ? "good" : v < fair ? "fair" : "bad";
+}
+
+function dayOf(t) { // the report's local day holding t: [midnight, "21 Mehr", "Monday 21 Mehr 1405"]
+  const days = pingHist.data?.days || [];
+  let found = null;
+  for (const day of days) if (day[0] <= t) found = day;
+  return found;
+}
+
+function pingCard(kind, label, cls) {
+  const live = kind === "internet" ? state.ping : state.pingGateway;
+  const d = pingHist.data;
+  const st = d?.stats?.[kind];
+  const host = live?.target || d?.hosts?.[kind] || "";
+  const auto = kind === "gateway" && live?.auto && host ? " · automatic" : "";
+  let now;
+  if (kind === "gateway" && !state.settings.ping_record) now = '<span class="problem">Only pinged while recording</span>';
+  else if (!live || live.target !== host || (!live.count && !live.problem)) now = '<span class="problem">Waiting…</span>';
+  else if (!live.count) now = `<span class="dot bad"></span><span class="problem">${esc(live.problem)}</span>`;
+  else if (live.last == null) now = `<span class="dot bad"></span><span class="problem">${esc(live.problem || "timeout")}</span>`;
+  else now = `<span class="dot ${pingQuality(kind, live.last)}"></span>${msText(live.last)}<span class="unit">ms</span>`;
+  const stat = (name, value, sub = "") => `<div><small>${name}</small><b>${value}</b>${sub ? `<span class="sub">${sub}</span>` : ""}</div>`;
+  const stats = !st || !st.sent ? `<p class="empty">Nothing recorded in ${PING_RANGES[d?.range] || "this period"}.</p>`
+    : `<div class="ping-stats">
+        ${stat("Average", msUnit(st.average), `best ${msText(st.best)} · worst ${msText(st.worst)}`)}
+        ${stat(st.p95_exact ? "p95" : "p95 ≈", msUnit(st.p95), "95% of pings faster")}
+        ${stat("Jitter", msUnit(st.jitter), "change between pings")}
+        ${stat("Loss", `${lossText(st.loss)}<span class="unit">%</span>`, `${st.lost.toLocaleString("en")} of ${st.sent.toLocaleString("en")}`)}
+        ${stat("Outages", String(st.outages), st.outages ? `${pingDuration(st.outage_time)} in all` : "none")}
+      </div>`;
+  return `<article class="card ping-card">
+    <header><span class="swatch ${cls}"></span>${label}<span class="spacer"></span><span class="muted label">${esc(host)}${auto}</span></header>
+    <div class="big">${now}</div>
+    ${stats}
+  </article>`;
+}
+
+function renderPingCards() {
+  $("ping-cards").innerHTML = PING_KINDS.map(([kind, label, cls]) => pingCard(kind, label, cls)).join("");
+}
+
+function pingTimeLabel(t) {
+  const d = pingHist.data, day = dayOf(t);
+  const hm = (x) => clock(x, false);
+  if (d.step === 1) return clock(t);
+  const span = d.step === 60 ? hm(t) : `${hm(t)}–${hm(t + d.step)}`;
+  return day ? `${day[2]} · ${span}` : span;
+}
+
+function pingTooltip() {
+  let tip;
+  return {
+    hooks: {
+      init(u) {
+        tip = document.createElement("div");
+        tip.className = "tooltip";
+        tip.hidden = true;
+        u.over.appendChild(tip);
+      },
+      setCursor(u) {
+        const d = pingHist.data, i = u.cursor.idx;
+        if (!d || i == null || u.cursor.left < 0) { tip.hidden = true; return; }
+        const t = d.step === 1 ? d.start + i : d.start + i * d.step;
+        let html = `<div class="time">${esc(pingTimeLabel(t))}</div>`;
+        for (const [kind, label, cls] of PING_KINDS) {
+          const s = d.series[kind];
+          let value, detail = "";
+          if (!s.sent[i]) value = "no pings";
+          else if (d.step === 1) value = s.lost[i] ? "lost" : `${msText(s.avg[i])} ms`;
+          else {
+            value = s.avg[i] == null ? "all lost" : `${msText(s.avg[i])} ms`;
+            detail = (s.avg[i] == null ? "" : `${msText(s.lo[i])}–${msText(s.hi[i])} ms (min–p95), max ${msText(s.max[i])} · `)
+              + `${s.lost[i]} of ${s.sent[i]} lost`;
+          }
+          html += `<div class="row"><span class="swatch ${cls}"></span>${label}<b>${value}</b></div>`;
+          if (detail) html += `<div class="detail">${detail}</div>`;
+        }
+        const out = d.outages.filter((o) => o.start < t + d.step && o.end > t);
+        for (const o of out.slice(0, 3)) {
+          html += `<div class="row outage"><span class="swatch loss"></span>${o.kind === "internet" ? "Internet" : "Gateway"} outage<b>${pingDuration(o.duration)}${o.ongoing ? " so far" : ""}</b></div>`;
+        }
+        tip.innerHTML = html;
+        tip.hidden = false;
+        const x = u.cursor.left, y = u.cursor.top, w = tip.offsetWidth, h = tip.offsetHeight;
+        tip.style.left = `${x + 16 + w > u.over.clientWidth ? x - w - 16 : x + 16}px`;
+        tip.style.top = `${Math.max(0, Math.min(y - h / 2, u.over.clientHeight - h))}px`;
+      },
+    },
+  };
+}
+
+// Red shading under the lines where an outage was; red ticks along the top where pings were lost.
+function drawOutages(u) {
+  const d = pingHist.data;
+  if (!d) return;
+  const { ctx } = u, { top, height } = u.bbox;
+  ctx.save();
+  ctx.fillStyle = "rgba(248,81,73,0.16)";
+  for (const o of d.outages) {
+    const x0 = u.valToPos(Math.max(o.start, d.start), "x", true), x1 = u.valToPos(Math.min(o.end, d.end), "x", true);
+    ctx.fillRect(x0, top, Math.max(2 * devicePixelRatio, x1 - x0), height);
+  }
+  ctx.restore();
+}
+
+function drawLoss(u) {
+  const d = pingHist.data;
+  if (!d) return;
+  const { ctx } = u, { top } = u.bbox, dpr = devicePixelRatio;
+  const width = Math.max(2 * dpr, u.valToPos(d.start + d.step, "x", true) - u.valToPos(d.start, "x", true));
+  ctx.save();
+  ctx.fillStyle = PING_COLORS.loss;
+  const n = d.series.internet.sent.length;
+  for (let i = 0; i < n; i++) {
+    let lost = 0, sent = 0;
+    for (const [kind] of PING_KINDS) { lost += d.series[kind].lost[i]; sent += d.series[kind].sent[i]; }
+    if (!lost) continue;
+    ctx.globalAlpha = Math.min(1, 0.12 + 25 * lost / sent); // one lost ping in an hour stays faint; 4% or more is solid
+    const x = u.data[0][i];
+    ctx.fillRect(u.valToPos(x, "x", true) - width / 2, top, width, 5 * dpr);
+  }
+  ctx.restore();
+}
+
+function pingSplits(u, axis, min, max) { // 7 and 30 days: one label per day, as many as fit
+  const d = pingHist.data;
+  const days = (d?.days || []).map((day) => day[0]).filter((t) => t >= min && t <= max);
+  const per = u.bbox.width / devicePixelRatio / Math.max(1, (max - min) / 86400);
+  const every = Math.max(1, Math.ceil(64 / per));
+  return days.filter((_, i) => i % every === 0);
+}
+
+function makePingChart() {
+  const el = $("ping-chart");
+  pingHist.chart?.destroy();
+  pingHist.chart = null;
+  if (!el.clientWidth) return; // hidden page: made when it shows
+  const axis = { stroke: COLORS.axis, grid: { stroke: COLORS.grid, width: 1 }, ticks: { show: false }, font: "11px Segoe UI" };
+  const daily = pingHist.data && pingHist.data.step >= 600;
+  const edge = { stroke: "transparent", width: 0, points: { show: false } }; // band edges (min, p95)
+  const width = pingHist.data?.step === 1 ? 1.25 : 2; // a ping a second: thinner, or the hour is a solid smear
+  const line = (kind, label) => ({ label, stroke: PING_COLORS[kind], width, points: { show: false } });
+  pingHist.chart = new uPlot({
+    width: el.clientWidth,
+    height: el.clientHeight,
+    padding: [12, 8, 0, 0],
+    legend: { show: false },
+    cursor: {
+      y: false,
+      drag: { x: false, y: false, setScale: false },
+      points: { size: (u, i) => (i >= 5 ? 8 : 0), width: 2, fill: COLORS.bg, stroke: (u, i) => [, , , , , PING_COLORS.internet, PING_COLORS.gateway][i] },
+    },
+    scales: { x: { time: true, auto: false }, y: { auto: false } },
+    axes: [
+      daily
+        ? { ...axis, space: 64, splits: pingSplits, values: (u, splits) => splits.map((t) => dayOf(t)?.[1] || "") }
+        : { ...axis, space: 70, values: (u, splits) => splits.map((t) => clock(t, false)) },
+      { ...axis, size: 62, space: 30, values: (u, splits) => splits.map((v) => `${v} ms`) },
+    ],
+    series: [{}, { ...edge }, { ...edge }, { ...edge }, { ...edge }, line("internet", "Internet"), line("gateway", "Gateway")],
+    bands: [{ series: [1, 2], fill: "rgba(57,135,229,0.18)" }, { series: [3, 4], fill: "rgba(25,158,112,0.18)" }],
+    hooks: { drawClear: [drawOutages], draw: [drawLoss] },
+    plugins: [pingTooltip()],
+  }, [[], [], [], [], [], [], []], el);
+  pingHist.layout = `${daily}|${width}`;
+  renderPingChart();
+}
+
+function renderPingChart() {
+  const d = pingHist.data;
+  if (!d || document.hidden || state.view !== "ping") return;
+  if (!pingHist.chart || pingHist.layout !== `${d.step >= 600}|${d.step === 1 ? 1.25 : 2}`) return makePingChart();
+  const n = d.series.internet.avg.length;
+  const xs = new Array(n);
+  for (let i = 0; i < n; i++) xs[i] = d.step === 1 ? d.start + i : d.start + i * d.step + d.step / 2;
+  const s = (kind, key) => d.series[kind][key];
+  // Scale to the 99th percentile, so one lone spike doesn't flatten everything else (it runs off the top).
+  const values = [];
+  for (const [kind] of PING_KINDS) for (const key of ["avg", "hi"]) for (const v of s(kind, key)) if (v != null) values.push(v);
+  values.sort((a, b) => a - b);
+  const p99 = values.length ? values[Math.min(values.length - 1, Math.floor(values.length * 0.99))] : 50;
+  pingHist.chart.batch(() => {
+    pingHist.chart.setData([xs, s("internet", "hi"), s("internet", "lo"), s("gateway", "hi"), s("gateway", "lo"),
+      s("internet", "avg"), s("gateway", "avg")], false);
+    pingHist.chart.setScale("x", { min: d.start, max: d.end });
+    pingHist.chart.setScale("y", { min: 0, max: Math.max(10, p99 * 1.25) });
+  });
+}
+
+function schedulePingChart() { // live pings arrive twice a second; draw at most every half second
+  if (pingHist.drawTimer) return;
+  pingHist.drawTimer = setTimeout(() => { pingHist.drawTimer = 0; renderPingChart(); }, 500);
+}
+
+new ResizeObserver(() => {
+  const el = $("ping-chart");
+  if (pingHist.chart && el.clientWidth) pingHist.chart.setSize({ width: el.clientWidth, height: el.clientHeight });
+  else if (!pingHist.chart && el.clientWidth) renderPingChart();
+}).observe($("ping-chart"));
+
+function renderPingOutages() {
+  const d = pingHist.data, el = $("ping-outages");
+  if (!d) return;
+  if (!d.outages.length) {
+    el.innerHTML = `<p class="empty">No outages in ${PING_RANGES[d.range]}.</p>`;
+    return;
+  }
+  const cause = (o) => (o.kind === "gateway" ? "Local network"
+    : o.cause === "local" ? "Local network <span class=\"muted\">– the gateway was down too</span>"
+      : o.cause === "internet" ? "Internet <span class=\"muted\">– the gateway answered</span>" : "–");
+  const rows = d.outages.map((o) => `<tr class="${o.ongoing ? "ongoing" : ""}">
+      <td>${esc(o.label)}</td>
+      <td class="num">${o.ongoing ? "going on · " : ""}${pingDuration(o.duration)}</td>
+      <td><span class="cause"><span class="swatch ${o.kind === "internet" ? "inet" : "gw"}"></span>${o.kind === "internet" ? "Internet" : "Gateway"}
+        <span class="muted">${esc(o.host)}</span></span></td>
+      <td>${cause(o)}</td>
+      <td class="num">${o.lost.toLocaleString("en")}</td>
+    </tr>`).join("");
+  el.innerHTML = `<table class="table"><thead><tr><th>Started</th><th class="num">Lasted</th><th>Target</th>`
+    + `<th>Where</th><th class="num">Lost pings</th></tr></thead><tbody>${rows}</tbody></table>`
+    + (d.more_outages ? `<p class="hint">…and ${d.more_outages} older ones in this period.</p>` : "");
+}
+
+function renderPingHint() {
+  const d = pingHist.data;
+  if (!d) return;
+  let text = `One ping a second to each target; the chart shows ${PING_POINTS[d.step]}`
+    + (d.step > 1 ? " (line = average, band = fastest to 95th percentile)" : "") + ". Red: lost pings and outages.";
+  if (d.first_label) text += ` Recording since ${d.first_label}.`;
+  if (d.step > 1 && Object.values(d.stats).some((s) => s.sent && !s.p95_exact)) {
+    text += " p95 ≈: single pings are kept for a week, so older periods use the per-minute values.";
+  }
+  $("ping-hint").textContent = text;
+}
+
+function renderPingPage() {
+  $("ping-off").hidden = Boolean(state.settings.ping_record);
+  markSegment("ping-range", state.pingRange);
+  renderPingCards();
+  renderPingChart();
+  renderPingOutages();
+  renderPingHint();
+}
+
+function requestPing() {
+  send({ type: "ping_history", range: state.pingRange });
+}
+
+// A live ping (1-hour view): put it on the chart right away; the rest updates once a minute.
+function addLivePing(msg) {
+  const d = pingHist.data;
+  if (!d || d.step !== 1 || msg.t == null || !d.series[msg.kind]) return;
+  if (msg.t >= d.end) { // slide the hour along
+    const shift = Math.min(msg.t - d.end + 1, d.end - d.start);
+    for (const series of Object.values(d.series)) {
+      for (const [key, list] of Object.entries(series)) {
+        list.splice(0, shift);
+        for (let k = 0; k < shift; k++) list.push(key === "sent" || key === "lost" ? 0 : null);
+      }
+    }
+    d.start += shift;
+    d.end += shift;
+  }
+  const i = msg.t - d.start;
+  if (i < 0) return;
+  const s = d.series[msg.kind];
+  s.sent[i] = 1;
+  s.lost[i] = msg.last == null ? 1 : 0;
+  s.avg[i] = msg.last;
+  schedulePingChart();
+}
+
+onSegment("ping-range", (value) => {
+  state.pingRange = value;
+  markSegment("ping-range", value);
+  requestPing();
+});
+
+$("delete-ping").addEventListener("click", () => {
+  if (!confirm("Delete the ping history – every recorded ping and outage?\n\nYour usage history stays. This can't be undone.")) return;
+  send({ type: "delete_ping_history" });
+});
+
 // ---------- settings page ----------
 
 const HOST = /^[A-Za-z0-9.\-:]{1,253}$/;
@@ -2126,7 +2498,9 @@ function renderPing() {
   const p = state.ping;
   const target = (state.settings.ping_target || "").trim();
   const message = (html) => { el.innerHTML = `<div class="message">${html}</div>`; };
-  if (!state.settings.ping_visible) return message("The ping widget is off – turn it on above to start pinging.");
+  if (!state.settings.ping_visible && !state.settings.ping_record) {
+    return message("Not pinging: the ping widget and the ping history are both off.");
+  }
   if (!p || p.target !== target || (!p.count && !p.problem)) return message(`Waiting for the first reply from ${esc(target)}…`);
   if (!p.count) return message(`<span class="dot bad"></span>${esc(target)}: ${esc(p.problem)}`);
 
@@ -2152,12 +2526,14 @@ function pingNote(text, error = false) {
 
 $("ping-form").addEventListener("submit", (e) => {
   e.preventDefault();
-  const input = $("ping-target");
-  const value = input.value.trim();
-  if (!HOST.test(value)) return pingNote("Enter an IP address or a host name.", true);
-  send({ type: "settings", ping_target: value });
-  pingNote(`Saved – now pinging ${value}`);
+  const input = $("ping-target"), gateway = $("ping-gateway");
+  const value = input.value.trim(), router = gateway.value.trim();
+  if (!HOST.test(value)) return pingNote("Internet target: enter an IP address or a host name.", true);
+  if (router && !HOST.test(router)) return pingNote("Gateway: enter an IP address, or leave it empty.", true);
+  send({ type: "settings", ping_target: value, ping_gateway: router });
+  pingNote(`Saved – now pinging ${value} and ${router || "the gateway found automatically"}`);
   input.blur();
+  gateway.blur();
 });
 
 for (const box of document.querySelectorAll("[data-setting]")) {
@@ -2166,7 +2542,7 @@ for (const box of document.querySelectorAll("[data-setting]")) {
 
 // ---------- pages ----------
 
-const VIEWS = ["live", "usage", "router", "connections", "map", "settings"];
+const VIEWS = ["live", "usage", "ping", "router", "connections", "map", "settings"];
 
 function showView() {
   const wanted = location.hash.slice(1);
@@ -2174,6 +2550,7 @@ function showView() {
   for (const el of document.querySelectorAll(".view")) el.hidden = el.id !== `view-${state.view}`;
   for (const tab of document.querySelectorAll(".tab[data-view]")) tab.classList.toggle("active", tab.dataset.view === state.view);
   if (state.view === "usage") requestUsage();
+  if (state.view === "ping") { renderPingPage(); requestPing(); }
   if (state.view === "router") { renderRouter(); requestRouter(); }
   if (state.view === "connections") renderConnections();
   if (state.view === "map") showMap(); else hideMap(); // the globe draws only while it's seen
@@ -2191,6 +2568,8 @@ function render() {
   } else if (state.view === "settings") {
     renderPing();
     renderCaptureStatus();
+  } else if (state.view === "ping") {
+    renderPingCards(); // "now" changes every second; the chart follows the live pings itself
   }
   // The usage page changes once a minute; it is drawn when its data arrives.
 }
@@ -2217,8 +2596,10 @@ function applySettings(settings) {
   state.settings = settings;
   markSegment("units", settings.units);
   for (const box of document.querySelectorAll("[data-setting]")) box.checked = Boolean(settings[box.dataset.setting]);
-  const target = $("ping-target");
+  const target = $("ping-target"), gateway = $("ping-gateway");
   if (document.activeElement !== target) target.value = settings.ping_target || "";
+  if (document.activeElement !== gateway) gateway.value = settings.ping_gateway || "";
+  $("ping-off").hidden = Boolean(settings.ping_record);
   if (state.quotaStartSent) {
     if (settings.quota_start !== state.quotaStartSent) {
       $("quota-note").textContent = `${state.quotaStartSent} isn't a date in the Jalali calendar.`;
@@ -2244,6 +2625,7 @@ function onMessage(msg) {
     for (const [t, down, up] of msg.history) addPoint(t, down, up);
     if (msg.tick) state.tick = msg.tick;
     state.ping = msg.ping;
+    state.pingGateway = msg.ping_gateway;
     state.usage = msg.usage;
     state.router = msg.router;
     state.geoip = msg.geoip;
@@ -2258,6 +2640,7 @@ function onMessage(msg) {
     conn.watching = false; // a new connection to NetMon: ask for the connections again
     updateWatch();
     if (state.view === "usage") requestUsage();
+    if (state.view === "ping") requestPing();
     if (state.view === "router") { renderRouter(); requestRouter(); }
   } else if (msg.type === "tick") {
     addPoint(msg.t, msg.down, msg.up);
@@ -2265,8 +2648,23 @@ function onMessage(msg) {
   } else if (msg.type === "settings") {
     applySettings(msg.settings);
   } else if (msg.type === "ping") {
-    state.ping = msg;
-    if (state.view === "settings" && !document.hidden) renderPing();
+    if (msg.kind === "gateway") state.pingGateway = msg; else state.ping = msg;
+    addLivePing(msg);
+    if (document.hidden) return;
+    if (state.view === "settings") {
+      renderPing();
+      $("ping-gateway").placeholder = state.pingGateway?.auto && state.pingGateway.target
+        ? `Automatic (${state.pingGateway.target})` : "Automatic";
+    }
+    if (state.view === "ping") renderPingCards();
+    return;
+  } else if (msg.type === "ping_saved") {
+    if (state.view === "ping") requestPing(); // a minute was saved, or an outage began or ended
+    return;
+  } else if (msg.type === "ping_history") {
+    if (msg.range !== state.pingRange) return; // an answer for a range no longer shown
+    pingHist.data = msg;
+    if (state.view === "ping") renderPingPage();
     return;
   } else if (msg.type === "navigate") {
     location.hash = msg.view; // the page switch happens in showView()
@@ -2314,7 +2712,18 @@ function onMessage(msg) {
     renderGeoip();
     return;
   } else if (msg.type === "router_test") {
-    routerNote("router-note", msg.message, msg.ok ? "ok" : "error");
+    const direct = state.settings.router_mode === "direct";
+    routerNote(direct ? "direct-note" : "router-note", msg.message, msg.ok ? "ok" : "error");
+    if (direct && msg.ok && state.directTest) {  // it works: read this router from now on
+      send({ type: "settings", router_mode: "direct", router_host: state.directTest.host, router_wan: state.directTest.wan });
+    }
+    return;
+  } else if (msg.type === "router_script" && msg.for === "direct") {
+    $("direct-output").hidden = !msg.ok;
+    $("direct-copy").disabled = !msg.ok;
+    if (msg.ok) $("direct-output").value = msg.script;
+    routerNote("direct-note", msg.ok ? "Ready – copy it into the router's terminal, then press Test." : msg.message,
+               msg.ok ? "ok" : "error");
     return;
   } else if (msg.type === "router_script") {
     $("script-output").hidden = !msg.ok;
@@ -2347,6 +2756,9 @@ document.addEventListener("visibilitychange", () => {
   render();
 });
 window.addEventListener("hashchange", showView);
+// The page itself never scrolls - each view scrolls inside. If anything (focusing a hidden
+// control, say) scrolls it anyway, everything would slide out of the window: put it back.
+window.addEventListener("scroll", () => { if (scrollX || scrollY) scrollTo(0, 0); });
 
 markSegment("range", state.range);
 markSegment("units", state.settings.units);
@@ -2354,6 +2766,7 @@ markSegment("usage-range", state.usageRange);
 markSegment("usage-mode", usageBars.mode);
 markSegment("usage-split", state.usageSplit);
 markSegment("usage-programs-period", state.usageProgramsPeriod);
+markSegment("ping-range", state.pingRange);
 renderUsageLegend();
 $("map-rotate").classList.toggle("on", map.rotate);
 markSegment("router-range", state.routerRange);

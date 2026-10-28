@@ -16,6 +16,8 @@
   --fair: #d29922;
   --bad: #f85149;
   --accent: #3d8bfd;  /* switches and buttons (kept apart from the two data colours) */
+  --inet: #3987e5;    /* Ping tab: the internet target (validated with --gw and --bad on the panel) */
+  --gw: #199e70;      /* ... the gateway */
   --radius: 12px;
   color-scheme: dark;
   font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
@@ -194,6 +196,8 @@ main {
 .tooltip .time { color: var(--text-2); margin-bottom: 4px; }
 .tooltip .row { display: flex; align-items: center; gap: 8px; }
 .tooltip .row b { margin-left: auto; padding-left: 16px; font-weight: 600; }
+.tooltip .detail { color: var(--muted); padding-left: 18px; margin-bottom: 3px; }
+.tooltip .row.outage { margin-top: 4px; color: var(--text-2); }
 
 /* ---------- adapters table ---------- */
 .table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
@@ -278,7 +282,7 @@ main {
 .form-note.ok { color: var(--good); }
 details.router-script { margin-top: 14px; border-top: 1px solid var(--row-line); padding-top: 12px; }
 details.router-script summary { cursor: pointer; color: var(--text); font-weight: 500; }
-#script-output {
+#script-output, #direct-output {
   width: 100%;
   height: 260px;
   margin-top: 8px;
@@ -368,7 +372,7 @@ input[type="search"] {
 input[type="search"]:focus { outline: none; border-color: var(--accent); }
 .check { position: relative; display: inline-flex; align-items: center; gap: 8px; color: var(--text-2); font-size: 12.5px; cursor: pointer; white-space: nowrap; }
 .check:hover { color: var(--text); }
-.check input { position: absolute; opacity: 0; pointer-events: none; }
+.check input { position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .check i { width: 16px; height: 16px; border-radius: 4px; border: 1px solid #3a4558; background: var(--bg); display: inline-grid; place-items: center; flex: none; }
 .check input:checked + i { background: var(--accent); border-color: var(--accent); }
 .check input:checked + i::after {
@@ -701,6 +705,7 @@ a[target="_blank"]:hover { text-decoration: underline; }
 .settings-panel { max-width: 780px; width: 100%; }
 .settings-panel h2 { margin: 0 0 4px; font-size: 14px; font-weight: 600; }
 .switch-row {
+  position: relative; /* keeps its hidden checkbox inside the row - else focusing it scrolled the whole page away */
   display: flex;
   align-items: center;
   gap: 20px;
@@ -711,7 +716,7 @@ a[target="_blank"]:hover { text-decoration: underline; }
 .switch-row span { flex: 1; display: flex; flex-direction: column; gap: 3px; }
 .switch-row b { font-weight: 500; }
 .switch-row small { color: var(--muted); font-size: 12.5px; }
-.switch-row input { position: absolute; opacity: 0; pointer-events: none; }
+.switch-row input { position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .switch { flex: none; position: relative; width: 38px; height: 22px; border-radius: 11px; background: #2a3445; transition: background .15s; }
 .switch::after {
   content: "";
@@ -800,3 +805,43 @@ code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; color
 .status i { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
 .status.live i { background: var(--good); box-shadow: 0 0 6px var(--good); }
 .status.lost i { background: var(--bad); }
+
+/* ---------- ping tab ---------- */
+.cards.two { grid-template-columns: repeat(2, 1fr); }
+.swatch.inet { --c: var(--inet); }
+.swatch.gw { --c: var(--gw); }
+.swatch.loss { --c: var(--bad); }
+.swatch.band { --c: rgb(57 135 229 / .3); }
+.ping-banner {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--fair);
+  border-radius: var(--radius);
+  padding: 12px 18px;
+  color: var(--text-2);
+}
+.ping-card .big .dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 10px;
+  vertical-align: 5px; background: var(--muted); }
+.ping-card .big .dot.good { background: var(--good); }
+.ping-card .big .dot.fair { background: var(--fair); }
+.ping-card .big .dot.bad { background: var(--bad); }
+.ping-card .big .problem { font-size: 20px; color: var(--text-2); }
+.ping-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-top: 8px; }
+.ping-stats small { display: block; color: var(--muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; }
+.ping-stats b { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ping-stats b .unit { font-size: 11.5px; color: var(--text-2); font-weight: 500; margin-left: 3px; }
+.ping-stats .sub { display: block; color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.ping-card .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ping-panel { flex: 1 0 auto; min-height: 400px; display: flex; flex-direction: column; }
+.ping-panel .panel-head .seg { margin-left: auto; }
+.ping-outages-panel { flex: none; display: flex; flex-direction: column; max-height: 320px; }
+.ping-outages-panel .table td { padding: 6px 8px; }
+.ping-outages-panel .empty { color: var(--muted); margin: 14px 6px; }
+.ping-outages-panel tr.ongoing td { color: var(--bad); }
+.cause { display: inline-flex; align-items: center; gap: 6px; }
+#ping-form input[type="text"] { width: 220px; }
+
+/* Router tab: estimates, and how NetMon gets the router's data */
+.bar-chart .bar.est { opacity: .42; }
+.router-status .gap { color: var(--fair); font-size: 12.5px; margin-top: 4px; }
+.router-way { margin: 2px 0 12px; }
