@@ -502,6 +502,11 @@ tr.group.open .caret { transform: rotate(90deg); }
 .conn-detail dt { color: var(--muted); font-size: 12px; padding-top: 1px; }
 .conn-detail dd { margin: 0; overflow-wrap: anywhere; }
 .conn-detail dd .flag { vertical-align: -1px; margin-right: 7px; }
+.lookup-result h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; }
+.lookup-result dl { display: grid; grid-template-columns: 110px 1fr; gap: 10px 12px; margin: 4px 0; font-size: 13px; }
+.lookup-result dt { color: var(--muted); font-size: 12px; padding-top: 1px; }
+.lookup-result dd { margin: 0; overflow-wrap: anywhere; }
+.lookup-result dd .flag { vertical-align: -1px; margin-right: 7px; }
 .mono { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; }
 .copy {
   margin-left: 6px;

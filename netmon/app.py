@@ -100,7 +100,7 @@ def run(minimized: bool = False, debug: bool = False) -> None:
     recorder = PingRecorder(history)
     pinger.echo_listeners.append(lambda echo: settings.ping_record and recorder.on_echo(echo))
     router_link = RouterLink(settings, history)
-    geoip = GeoIP()
+    geoip = GeoIP(settings)
     apps, names = AppCatalog(), Names()
     traffic = TrafficMonitor(settings, geoip, apps, names, history)  # per-program traffic (Npcap)
     monitor.subscribe(traffic.on_tick)

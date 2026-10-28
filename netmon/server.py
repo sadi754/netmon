@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import ipaddress
 import json
 import logging
 import os
@@ -31,6 +32,7 @@ from . import (__version__, autostart, export, jalali, periods, pinghistory, rou
                routerscript, usage, winutil)
 from .connwatch import ConnectionWatcher
 from .geoip import GeoIP
+from .geoip import scope as geoip_scope
 from .history import History
 from .monitor import Monitor
 from .paths import DATA_DIR, FROZEN, WEB_DIR
@@ -89,6 +91,7 @@ _EDITABLE: dict[str, Callable[[object], bool]] = {
     "router_user": lambda v: isinstance(v, str) and bool(_ROUTEROS_NAME.match(v.strip())),
     "router_password": lambda v: isinstance(v, str) and 0 < len(v) <= 128,  # stored encrypted (app.py)
     "rdns_enabled": lambda v: isinstance(v, bool),
+    "geoip_auto_update": lambda v: isinstance(v, bool),
     "home_country": is_country_code,
     "conn_hide_local": lambda v: isinstance(v, bool),
     "conn_show_listening": lambda v: isinstance(v, bool),
@@ -339,6 +342,10 @@ class WebServer:
             report = await asyncio.to_thread(pinghistory.report, self.history, self.recorder, message["range"])
             self._send(queue, {"type": "ping_history", **report})
             return
+        if kind == "ip_lookup":
+            result = await asyncio.to_thread(self._ip_lookup, str(message.get("address", "")).strip())
+            self._send(queue, {"type": "ip_lookup", **result})
+            return
         if kind == "connections_watch":
             self._watch(queue, bool(message.get("on")))
             return
@@ -449,6 +456,24 @@ class WebServer:
         for program in report["programs"]:  # an icon if its .exe can still be found
             program["icon"] = self.connections.apps.icon_for(program["key"], program["path"], program["exe"]) is not None
         return report
+
+    def _ip_lookup(self, address: str) -> dict:
+        """IP Lookup tab: what the GeoIP database knows about an address the user typed."""
+        try:
+            ipaddress.ip_address(address)
+        except ValueError:
+            return {"ok": False, "address": address, "message": "Enter a valid IPv4 or IPv6 address."}
+        reason = {"loopback": "That's this PC.", "lan": "That's a local-network address.",
+                  "multicast": "That's a multicast address.", "special": "That's a reserved/special-use address."}
+        kind = geoip_scope(address)
+        if kind != "internet":
+            return {"ok": False, "address": address, "message": f"{reason[kind]} There's nothing to look up."}
+        if not self.geoip.ready:
+            return {"ok": False, "address": address, "message": "The GeoIP database isn't installed yet (Settings → Connections)."}
+        found = self.geoip.lookup(address)
+        if not found:
+            return {"ok": False, "address": address, "message": "No match in the GeoIP database for this address."}
+        return {"ok": True, "address": address, **found}
 
     def _programs_message(self) -> dict:
         programs = self.traffic.programs

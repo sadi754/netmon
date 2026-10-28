@@ -3,8 +3,10 @@
 From DB-IP's free "IP to City Lite" and "IP to ASN Lite" databases (licence
 CC BY 4.0: "IP geolocation by DB-IP"). They are not shipped with NetMon:
 Settings -> Download fetches them once (about 65 MB) into data/geoip, and DB-IP
-publishes a new edition every month. Lookups happen on this PC and take
-microseconds - no address is ever sent anywhere to be located.
+publishes a new edition every month. Settings -> "Keep the GeoIP database up to
+date" (off by default) checks for a newer edition once a day and downloads it
+automatically, once a database is already installed. Lookups happen on this PC
+and take microseconds - no address is ever sent anywhere to be located.
 """
 from __future__ import annotations
 
@@ -25,12 +27,14 @@ import maxminddb
 
 from . import __version__, net
 from .paths import DATA_DIR
+from .settings import Settings
 
 GEOIP_DIR = DATA_DIR / "geoip"
 _KINDS = {"city": ("dbip-city-lite", "City"), "asn": ("dbip-asn-lite", "ASN")}  # file name, database type
 _URL = "https://download.db-ip.com/free/{name}-{edition}.mmdb.gz"
 _CHUNK = 256 * 1024
 _DISTRICT = re.compile(r"\s*\(.*\)$")
+_AUTO_UPDATE_CHECK_EVERY = 86400  # DB-IP publishes monthly; once a day is plenty
 
 log = logging.getLogger(__name__)
 
@@ -74,7 +78,8 @@ class DownloadCancelled(Exception):
 
 
 class GeoIP:
-    def __init__(self, folder: Path = GEOIP_DIR):
+    def __init__(self, settings: Settings, folder: Path = GEOIP_DIR):
+        self._settings = settings
         self._dir = folder
         self._lock = threading.Lock()  # guards the open databases
         self._readers: dict[str, maxminddb.Reader] = {}
@@ -94,10 +99,21 @@ class GeoIP:
                     self._open(kind, files[-1])
                 except (OSError, maxminddb.InvalidDatabaseError):
                     log.warning("Ignoring broken GeoIP file %s", files[-1], exc_info=True)
+        threading.Thread(target=self._auto_update_loop, name="geoip-auto-update", daemon=True).start()
 
     @property
     def ready(self) -> bool:
         return "city" in self._readers
+
+    def _auto_update_loop(self) -> None:
+        time.sleep(60)  # let NetMon settle first
+        while True:
+            if self._settings.geoip_auto_update and self.ready and not self._busy:
+                try:
+                    self.download()  # a no-op (just a quick check) if already the newest edition
+                except Exception:
+                    log.exception("GeoIP auto-update failed")
+            time.sleep(_AUTO_UPDATE_CHECK_EVERY)
 
     def _open(self, kind: str, path: Path) -> None:
         reader = maxminddb.open_database(str(path))  # memory-mapped: the file isn't loaded into RAM

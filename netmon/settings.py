@@ -66,6 +66,7 @@ class Settings:
     router_password: str = ""        # direct: its password, encrypted for this Windows user (DPAPI)
     router_wan: str = ""             # direct: the internet interface, e.g. pppoe-out1
     rdns_enabled: bool = True        # look up host names of connections (reverse DNS)
+    geoip_auto_update: bool = False  # check once a day for a newer DB-IP edition and download it
     home_country: str = ""           # ISO code ("IR") for "domestic"; "" = the country set in Windows
     conn_hide_local: bool = True     # Connections tab: hide this PC's own and LAN connections
     conn_show_listening: bool = False  # ... show listening ports / UDP sockets

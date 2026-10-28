@@ -1199,6 +1199,7 @@ function renderGeoip() {
   renderGeoipSettings();
   if (state.view === "connections") renderConnections();
   if (state.view === "map") renderMap();
+  if (state.view === "iplookup") renderGeoipBanner("iplookup-geoip");
 }
 
 document.addEventListener("click", (e) => {
@@ -2540,9 +2541,46 @@ for (const box of document.querySelectorAll("[data-setting]")) {
   box.addEventListener("change", () => send({ type: "settings", [box.dataset.setting]: box.checked }));
 }
 
+function ipLookupNote(text, error = false) {
+  const note = $("iplookup-note");
+  note.textContent = text;
+  note.classList.toggle("error", error);
+}
+
+function renderIpLookup(msg) {
+  const el = $("iplookup-result");
+  if (!msg) { el.hidden = true; return; }
+  if (!msg.ok) {
+    el.hidden = true;
+    ipLookupNote(msg.message, true);
+    return;
+  }
+  ipLookupNote("");
+  const row = (label, value) => (value ? `<dt>${label}</dt><dd>${value}</dd>` : "");
+  const where = [msg.region, msg.city].filter(Boolean).join(", ");
+  el.hidden = false;
+  el.innerHTML = `<h2>${flag(msg.cc)}${esc(msg.country || msg.cc || "Unknown")}</h2>
+    <dl>
+      ${row("Address", `<span class="mono">${esc(msg.address)}</span>`)}
+      ${row("Location", esc(where))}
+      ${row("Network", msg.org ? `${esc(msg.org)}<br><span class="muted">AS${msg.asn}</span>` : "")}
+      ${row("Coordinates", msg.lat != null ? `${msg.lat.toFixed(2)}, ${msg.lon.toFixed(2)}` : "")}
+    </dl>`;
+}
+
+$("iplookup-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const input = $("iplookup-address");
+  const value = input.value.trim();
+  if (!value) return ipLookupNote("Enter an IP address.", true);
+  $("iplookup-result").hidden = true;
+  ipLookupNote("Looking up…");
+  send({ type: "ip_lookup", address: value });
+});
+
 // ---------- pages ----------
 
-const VIEWS = ["live", "usage", "ping", "router", "connections", "map", "settings"];
+const VIEWS = ["live", "usage", "ping", "router", "connections", "iplookup", "map", "settings"];
 
 function showView() {
   const wanted = location.hash.slice(1);
@@ -2553,6 +2591,7 @@ function showView() {
   if (state.view === "ping") { renderPingPage(); requestPing(); }
   if (state.view === "router") { renderRouter(); requestRouter(); }
   if (state.view === "connections") renderConnections();
+  if (state.view === "iplookup") renderGeoipBanner("iplookup-geoip");
   if (state.view === "map") showMap(); else hideMap(); // the globe draws only while it's seen
   updateWatch();
   render();
@@ -2710,6 +2749,9 @@ function onMessage(msg) {
   } else if (msg.type === "geoip") {
     state.geoip = msg;
     renderGeoip();
+    return;
+  } else if (msg.type === "ip_lookup") {
+    renderIpLookup(msg);
     return;
   } else if (msg.type === "router_test") {
     const direct = state.settings.router_mode === "direct";

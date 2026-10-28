@@ -31,6 +31,8 @@ GeoIP database for the Connections tab (one click in Settings).
   country, city and network (ISP), like TCPView with geolocation.
 - **Map** – a flat world map or a 3D globe, with animated arcs to every place your
   PC is talking to.
+- **IP Lookup** – type any address to see its country, city and network, from the
+  same offline GeoIP database.
 - **VPN / proxy check** – shows a VPN adapter, a VPN program or Windows' system proxy.
 - **Whole network (optional)** – with a MikroTik router: the usage of every device
   at home, split into domestic and international.
@@ -173,9 +175,17 @@ updated every 2 seconds:
   panel, **CSV** export, and **Show on map**.
 
 Locations come from **DB-IP's free GeoIP database** (City Lite + ASN Lite). It's
-downloaded on request (about 65 MB, 130 MB on disk) and can be updated monthly in
-Settings → Connections. All lookups happen on your PC. NetMon reads the connection
-table only while the tab is visible.
+downloaded on request (about 65 MB, 130 MB on disk) and can be updated by hand any
+time in Settings → Connections, or kept current automatically (checks once a day
+for DB-IP's monthly edition; off by default). All lookups happen on your PC. NetMon
+reads the connection table only while the tab is visible.
+
+### IP Lookup
+
+Type any IPv4 or IPv6 address to see its country, city and network – the same
+offline GeoIP database as the Connections tab, so nothing you type is sent
+anywhere. A local-network, loopback or reserved address says so instead of a
+location, since it isn't in the database.
 
 ### Map
 
@@ -228,7 +238,8 @@ for features you use:
 - **Host names** (Connections, on by default): reverse-DNS lookups go to your normal
   DNS server. Switch off in Settings.
 - **GeoIP database**: downloaded from `download.db-ip.com` when you click Download
-  or Update. Addresses are never sent anywhere to be located.
+  or Update, or once a day if you turn on keeping it up to date automatically
+  (off by default). Addresses are never sent anywhere to be located.
 - **Ping widget**: pings the target you set, while shown.
 - **MikroTik router** (off by default): reads your router's byte counters – directly in your local
   network, or from your own relay.

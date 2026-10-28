@@ -16,6 +16,7 @@
     <a class="tab" href="#ping" data-view="ping">Ping</a>
     <a class="tab" href="#router" data-view="router" id="router-tab" hidden>Router</a>
     <a class="tab" href="#connections" data-view="connections">Connections</a>
+    <a class="tab" href="#iplookup" data-view="iplookup">IP Lookup</a>
     <a class="tab" href="#map" data-view="map">Map</a>
     <a class="tab" href="#settings" data-view="settings">Settings</a>
   </nav>
@@ -228,6 +229,24 @@
   </section>
 </main>
 
+<main class="view" id="view-iplookup" hidden>
+  <section class="geoip-banner" id="iplookup-geoip" hidden></section>
+  <section class="panel">
+    <h2>Look up an address</h2>
+    <form id="iplookup-form" class="form-grid" autocomplete="off">
+      <label for="iplookup-address">IP address</label>
+      <span><input id="iplookup-address" type="text" spellcheck="false" maxlength="45"
+        placeholder="e.g. 8.8.8.8 or 2001:4860:4860::8888">
+        <button type="submit" class="button">Look up</button></span>
+      <span></span>
+      <span class="form-note" id="iplookup-note"></span>
+    </form>
+  </section>
+  <section class="panel lookup-result" id="iplookup-result" hidden></section>
+  <p class="hint">Country, city and network come from the same offline GeoIP database as the Connections tab – nothing
+    you type here is sent anywhere.</p>
+</main>
+
 <main class="view" id="view-map" hidden>
   <section class="geoip-banner" id="map-geoip" hidden></section>
   <div class="map-row">
@@ -346,6 +365,12 @@
   <section class="panel settings-panel">
     <h2>Connections</h2>
     <div class="geoip-row" id="geoip-settings"></div>
+    <label class="switch-row">
+      <span><b>Keep the GeoIP database up to date</b><small>Check once a day for a newer DB-IP edition (published
+        monthly) and download it automatically. Needs the GeoIP database installed (above); off, you can still update
+        it by hand any time.</small></span>
+      <input type="checkbox" data-setting="geoip_auto_update"><i class="switch"></i>
+    </label>
     <label class="switch-row">
       <span><b>Look up host names</b><small>Ask your DNS server for each address's name (reverse DNS), like <code>google.com</code> instead of only an IP. Turn off to keep these lookups off the network.</small></span>
       <input type="checkbox" data-setting="rdns_enabled"><i class="switch"></i>
